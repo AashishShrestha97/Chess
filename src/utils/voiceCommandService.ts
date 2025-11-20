@@ -44,116 +44,181 @@ const COMMAND_PATTERNS: { [key: string]: string[] } = {
   SELECT_BULLET_1_0: [
     "bullet 1+0",
     "bullet 1 plus 0",
+    "bullet 1 0",
+    "bullet one plus zero",
+    "bullet one zero",
   ],
   SELECT_BULLET_1_1: [
     "bullet 1+1",
     "bullet 1 plus 1",
+    "bullet 1 1",
+    "bullet one plus one",
+    "bullet one one",
   ],
   SELECT_BULLET_2_1: [
     "bullet 2+1",
     "bullet 2 plus 1",
+    "bullet 2 1",
+    "bullet two plus one",
+    "bullet two one",
   ],
   SELECT_BULLET_2_0: [
     "bullet 2+0",
     "bullet 2 plus 0",
+    "bullet 2 0",
+    "bullet two plus zero",
+    "bullet two zero",
   ],
   SELECT_BULLET_30_0: [
     "bullet 30 seconds",
     "bullet 30+0",
+    "bullet 30 plus 0",
+    "bullet thirty seconds",
   ],
 
   // Specific Blitz time controls
   SELECT_BLITZ_3_0: [
     "blitz 3+0",
     "blitz 3 plus 0",
+    "blitz 3 0",
+    "blitz three plus zero",
+    "blitz three zero",
   ],
   SELECT_BLITZ_3_2: [
     "blitz 3+2",
     "blitz 3 plus 2",
+    "blitz 3 2",
+    "blitz three plus two",
+    "blitz three two",
   ],
   SELECT_BLITZ_5_0: [
     "blitz 5+0",
     "blitz 5 plus 0",
+    "blitz 5 0",
+    "blitz five plus zero",
+    "blitz five zero",
   ],
   SELECT_BLITZ_5_3: [
     "blitz 5+3",
     "blitz 5 plus 3",
+    "blitz 5 3",
+    "blitz five plus three",
+    "blitz five three",
   ],
   SELECT_BLITZ_4_2: [
     "blitz 4+2",
     "blitz 4 plus 2",
+    "blitz 4 2",
+    "blitz four plus two",
+    "blitz four two",
   ],
 
   // Specific Rapid time controls
   SELECT_RAPID_10_0: [
     "rapid 10+0",
     "rapid 10 plus 0",
+    "rapid 10 0",
+    "rapid ten plus zero",
+    "rapid ten zero",
   ],
   SELECT_RAPID_10_5: [
     "rapid 10+5",
     "rapid 10 plus 5",
+    "rapid 10 5",
+    "rapid ten plus five",
+    "rapid ten five",
   ],
   SELECT_RAPID_15_10: [
     "rapid 15+10",
     "rapid 15 plus 10",
+    "rapid 15 10",
+    "rapid fifteen plus ten",
+    "rapid fifteen ten",
   ],
   SELECT_RAPID_15_0: [
     "rapid 15+0",
     "rapid 15 plus 0",
+    "rapid 15 0",
+    "rapid fifteen plus zero",
+    "rapid fifteen zero",
   ],
   SELECT_RAPID_25_10: [
     "rapid 25+10",
     "rapid 25 plus 10",
+    "rapid 25 10",
+    "rapid twenty five plus ten",
   ],
 
   // Specific Classical time controls
   SELECT_CLASSICAL_90_30: [
     "classical 90+30",
     "classical 90 plus 30",
+    "classical 90 30",
+    "classical ninety plus thirty",
   ],
   SELECT_CLASSICAL_60_0: [
     "classical 60+0",
     "classical 60 plus 0",
+    "classical 60 0",
+    "classical sixty plus zero",
+    "classical sixty zero",
   ],
   SELECT_CLASSICAL_60_30: [
     "classical 60+30",
     "classical 60 plus 30",
+    "classical 60 30",
+    "classical sixty plus thirty",
   ],
   SELECT_CLASSICAL_120_30: [
     "classical 120+30",
     "classical 120 plus 30",
+    "classical 120 30",
+    "classical one twenty plus thirty",
   ],
   SELECT_CLASSICAL_90_40_30: [
     "classical 90/40+30",
     "classical 90 40 plus 30",
+    "classical ninety forty plus thirty",
   ],
 
   // Time control info inquiry
   TIME_CONTROLS_BULLET: [
     "time controls bullet",
     "bullet time controls",
+    "what are bullet time controls",
+    "tell me bullet time controls",
   ],
   TIME_CONTROLS_BLITZ: [
     "time controls blitz",
     "blitz time controls",
+    "what are blitz time controls",
+    "tell me blitz time controls",
   ],
   TIME_CONTROLS_RAPID: [
     "time controls rapid",
     "rapid time controls",
+    "what are rapid time controls",
+    "tell me rapid time controls",
   ],
   TIME_CONTROLS_CLASSICAL: [
     "time controls classical",
     "classical time controls",
+    "what are classical time controls",
+    "tell me classical time controls",
   ],
 
   // Opponent selection
   SELECT_RANDOM: [
     "random",
     "play random",
+    "random opponent",
+    "play against random",
   ],
   SELECT_FRIENDS: [
     "friends",
     "play with friends",
+    "play friends",
+    "with friends",
   ],
 
   // Navigation
@@ -172,6 +237,8 @@ const COMMAND_PATTERNS: { [key: string]: string[] } = {
   SHOW_COMMANDS: [
     "show commands",
     "help",
+    "voice commands",
+    "what can i say",
   ],
 };
 

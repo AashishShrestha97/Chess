@@ -32,38 +32,34 @@ const HomePage: React.FC = () => {
   // Voice recognition states
   const [isVoiceActive, setIsVoiceActive] = useState(false);
   const [currentTranscript, setCurrentTranscript] = useState("");
-  const [hasPlayedWelcome, setHasPlayedWelcome] = useState(false);
 
   // Refs to track pending actions
   const pendingModeRef = useRef<"voice" | "classic" | null>(null);
   const pendingTimeRef = useRef<TimeControl | null>(null);
+  const welcomePlayedRef = useRef(false);
 
   // Play welcome message once per session on this page
   useEffect(() => {
-    if (speechService.isSupportedBrowser()) {
-      // Use a page-specific key so other pages can have their own welcome
-      const hasBeenWelcomed = sessionStorage.getItem("homeWelcomed");
+    if (speechService.isSupportedBrowser() && !welcomePlayedRef.current) {
+      welcomePlayedRef.current = true;
 
-      if (!hasBeenWelcomed) {
-        sessionStorage.setItem("homeWelcomed", "true");
+      // Increased delay to ensure page is fully loaded and speech synthesis is ready
+      const welcomeTimeout = setTimeout(() => {
+        playWelcomeMessage();
+      }, 2000);
 
-        setTimeout(() => {
-          playWelcomeMessage();
-        }, 1000);
-      }
+      return () => clearTimeout(welcomeTimeout);
     }
+  }, []); // Empty dependency array - only run once on mount
 
-    // Cleanup: stop any ongoing speech when leaving HomePage
+  // Separate cleanup effect
+  useEffect(() => {
     return () => {
       speechService.stop();
     };
   }, []);
 
   const playWelcomeMessage = async () => {
-    if (hasPlayedWelcome) return;
-
-    setHasPlayedWelcome(true);
-
     const welcomeText = `Welcome to Voice Chess! You can control the game with your voice. 
     Try saying "Start voice chess" to begin, or say "Show commands" to see all available voice commands. 
     Voice recognition is now active and ready to listen.`;
@@ -71,10 +67,16 @@ const HomePage: React.FC = () => {
     try {
       await speechService.speak({
         text: welcomeText,
-        rate: 1.1,
+        rate: 1.0,
         volume: 0.9,
+        onStart: () => {
+          console.log("🔊 Playing welcome message");
+        },
         onEnd: () => {
-          console.log("Welcome message complete");
+          console.log("✅ Welcome message complete");
+        },
+        onError: (err) => {
+          console.warn("⚠️ Welcome speech error:", err);
         },
       });
     } catch (e) {
@@ -246,12 +248,10 @@ const HomePage: React.FC = () => {
 
       case "STOP_LISTENING":
         voiceCommandService.stopListening();
-        // Also stop any ongoing speech when user says "stop listening"
         speechService.stop();
         break;
 
       case "SHOW_COMMANDS":
-        // stop current explanation and show commands
         speechService.stop();
         setCommandsModalOpen(true);
         break;
@@ -341,6 +341,23 @@ const HomePage: React.FC = () => {
     }
   };
 
+  // Announce versus modal options
+  const announceVersusOptions = async () => {
+    if (speechService.isSupportedBrowser()) {
+      const announcement =
+        "Choose your opponent. Say play random to play against a random opponent, or say play with friends to play with someone you know.";
+      try {
+        await speechService.speak({
+          text: announcement,
+          rate: 1.0,
+          volume: 0.8,
+        });
+      } catch (e) {
+        console.warn("Failed to announce versus options:", e);
+      }
+    }
+  };
+
   // Handle start voice chess - announce time controls to blind users
   const handleStartVoiceChess = async () => {
     console.log("🎤 Starting Voice Chess");
@@ -390,6 +407,10 @@ const HomePage: React.FC = () => {
     setTimeModalOpen(false);
     setTimeout(() => {
       setVersusModalOpen(true);
+      // Announce versus options after modal opens
+      setTimeout(() => {
+        announceVersusOptions();
+      }, 300);
     }, 300);
   };
 
@@ -431,7 +452,6 @@ const HomePage: React.FC = () => {
 
   // Handle go back
   const handleGoBack = () => {
-    // Optional: stop speech when backing out of modals
     speechService.stop();
 
     if (versusModalOpen) {
@@ -448,7 +468,6 @@ const HomePage: React.FC = () => {
 
   // Click handlers (for manual interaction)
   const onStartVoice = () => {
-    // Stop any current speech (welcome, time info, etc.)
     speechService.stop();
     handleStartVoiceChess();
   };
@@ -459,7 +478,7 @@ const HomePage: React.FC = () => {
   };
 
   const handleTimeModalPick = (tc: TimeControl) => {
-    speechService.stop(); // stop any speech when choosing time manually
+    speechService.stop();
     handleTimeSelection(tc);
   };
 
@@ -502,7 +521,7 @@ const HomePage: React.FC = () => {
             <button
               className="voice-toggle-btn"
               onClick={() => {
-                speechService.stop(); // stop any ongoing speech
+                speechService.stop();
                 setCommandsModalOpen(true);
               }}
               style={{
@@ -520,7 +539,6 @@ const HomePage: React.FC = () => {
               onClick={() => {
                 if (isVoiceActive) {
                   voiceCommandService.stopListening();
-                  // Also stop any ongoing speech when turning voice "off"
                   speechService.stop();
                 } else {
                   startVoiceListening();
@@ -627,7 +645,7 @@ const HomePage: React.FC = () => {
       <TimeControlModal
         open={timeModalOpen}
         onClose={() => {
-          speechService.stop(); // stop any current speech when closing time modal
+          speechService.stop();
           setTimeModalOpen(false);
           setSelectedMode(null);
           pendingModeRef.current = null;
