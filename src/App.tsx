@@ -9,8 +9,6 @@ import "chessground/assets/chessground.brown.css";
 import "chessground/assets/chessground.cburnett.css";
 
 import "./App.css";
-import VoiceGamePage from "./pages/VoiceGamePage";
-import SimpleTestPage from "./pages/SimpleTestPage";
 
 const App: React.FC = () => {
   return (
@@ -20,8 +18,6 @@ const App: React.FC = () => {
         <Route path="/login" element={<LoginPage />} />
         <Route path="/signin" element={<SignInPage />} />
         <Route path="/home" element={<HomePage />} />
-        <Route path="/voicechess" element={<VoiceGamePage />} />
-        <Route path="/game-page" element={<SimpleTestPage />} />
       </Routes>
     </BrowserRouter>
   );
