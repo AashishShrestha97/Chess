@@ -1,0 +1,291 @@
+.hero {
+    position: relative;
+    overflow: hidden;
+    padding: 5rem 0 3rem;
+    background:
+        radial-gradient(1200px 400px at 50% -10%, rgba(255, 215, 0, .06), transparent 70%),
+        radial-gradient(1200px 400px at 50% 100%, rgba(255, 215, 0, .04), transparent 70%);
+}
+
+.hero::before {
+    content: "";
+    position: absolute;
+    inset: -30% -10% -10% -10%;
+    background: radial-gradient(circle at 50% 40%, rgba(255, 215, 0, .05) 0%, transparent 45%);
+    animation: heroParallax 16s ease-in-out infinite alternate;
+    pointer-events: none;
+}
+
+@keyframes heroParallax {
+    0% {
+        transform: translateY(-8px);
+        opacity: .9;
+    }
+
+    100% {
+        transform: translateY(8px);
+        opacity: .9;
+    }
+}
+
+.hero-inner {
+    text-align: center;
+    position: relative;
+    z-index: 1;
+}
+
+.crown {
+    width: 150px;
+    height: 150px;
+    margin: 0 auto 0 auto;
+    border-radius: 50%;
+    display: grid;
+    place-items: center;
+    background: transparent;
+    animation: crownFloat 3.2s ease-in-out infinite;
+}
+
+.crown img {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+    filter: drop-shadow(0 2px 8px rgba(255, 215, 0, .3));
+}
+
+@keyframes crownFloat {
+    0%, 100% {
+        transform: translateY(0);
+    }
+
+    50% {
+        transform: translateY(-10px);
+    }
+}
+
+.title {
+    margin: 0;
+    font-size: clamp(9.5rem, 13vw, 9.5rem);
+    /* was clamp(4.5rem, 12vw, 8.5rem) */
+    line-height: 1.05;
+    /* slightly tighter for a bold look */
+    font-weight: 800;
+    /* a touch heavier */
+    letter-spacing: -0.02em;
+}
+
+.hero .hero-title {
+    margin: 0;
+    font-size: clamp(6.5rem, 4vw, 12rem) !important;
+    /* force it to win */
+    line-height: 1.04;
+    font-weight: 800;
+    letter-spacing: -0.02em;
+}
+
+.accent {
+    color: var(--gold);
+    text-shadow: 0 0 30px rgba(255, 215, 0, .55);
+    animation: accentGlow 2.2s ease-in-out infinite alternate;
+}
+
+@keyframes accentGlow {
+    from {
+        text-shadow: 0 0 18px rgba(255, 215, 0, .45);
+    }
+
+    to {
+        text-shadow: 0 0 38px rgba(255, 215, 0, .9);
+    }
+}
+
+.subtitle {
+    margin: 1rem 0 0 0;
+    color: #b0b0b0;
+    font-size: clamp(1.05rem, 2.2vw, 1.35rem);
+    font-weight: 400;
+}
+
+.actions {
+    display: flex;
+    justify-content: center;
+    gap: 1rem;
+    margin-top: 2rem;
+    flex-wrap: wrap;
+}
+
+/* Buttons */
+.btns {
+    display: inline-flex;
+    align-items: center;
+    gap: .6rem;
+    font-weight: 600;
+    border-radius: 8px;
+    padding: .85rem 1.75rem;
+    border: none;
+    cursor: pointer;
+    transition: transform .18s ease, box-shadow .3s ease, background .3s ease, border-color .3s ease;
+    will-change: transform;
+    font-size: 1rem;
+}
+
+.btns svg {
+    width: 18px;
+    height: 18px;
+}
+
+.btn-primarys {
+    background: linear-gradient(135deg, var(--gold), var(--gold-2));
+    color: #0a0a0a;
+    box-shadow: 0 4px 16px rgba(255, 215, 0, .3);
+}
+
+.btn-primarys:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 8px 24px rgba(255, 215, 0, .45);
+}
+
+.btn-primarys:active {
+    transform: translateY(0);
+}
+
+.btn-outlines {
+    background: transparent;
+    border: 2px solid rgba(255, 255, 255, .15);
+    color: #ffffff;
+    backdrop-filter: blur(6px);
+}
+
+.btn-outlines:hover {
+    background: rgba(255, 255, 255, .05);
+    border-color: rgba(255, 255, 255, .25);
+    transform: translateY(-2px);
+    box-shadow: 0 4px 16px rgba(255, 255, 255, .1);
+}
+
+.btn-outlines:active {
+    transform: translateY(0);
+}
+
+/* Hero video panel */
+.hero-image {
+    width: min(1000px, 92%);
+    margin: 3rem auto 0;
+    position: relative;
+    border-radius: 16px;
+    overflow: hidden;
+    box-shadow: 0 20px 60px rgba(0, 0, 0, .6);
+    max-height: 550px;
+}
+
+.hero-video {
+    display: block;
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+}
+
+/* VOICE ENABLED PILL */
+.voice-pill {
+    position: absolute;
+    top: 20px;
+    right: 20px;
+    display: inline-flex;
+    align-items: center;
+    gap: .5rem;
+    font-weight: 700;
+    font-size: 0.9rem;
+    background: linear-gradient(135deg, var(--gold), var(--gold-2));
+    color: #1a1a1a;
+    padding: .65rem 1.1rem;
+    border-radius: 999px;
+    border: none;
+    cursor: pointer;
+    box-shadow: 0 8px 20px rgba(255, 215, 0, .4);
+    transition: transform .18s ease, box-shadow .3s ease;
+}
+
+.voice-pill:hover {
+    transform: translateY(-2px) scale(1.02);
+    box-shadow: 0 12px 28px rgba(255, 215, 0, .55);
+}
+
+/* Mic icon */
+.pill-mic {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #1a1a1a;
+}
+
+.pill-mic svg {
+    width: 16px;
+    height: 16px;
+    animation: micPulse 2s ease-in-out infinite;
+}
+
+@keyframes micPulse {
+    0%, 100% {
+        transform: scale(1);
+    }
+
+    50% {
+        transform: scale(1.1);
+    }
+}
+
+/* Fade-up animation */
+.fade-up {
+    opacity: 0;
+    transform: translateY(20px);
+    transition: opacity 0.6s ease, transform 0.6s ease;
+}
+
+.fade-up.visible {
+    opacity: 1;
+    transform: translateY(0);
+}
+
+/* Stagger the animations */
+.fade-up:nth-child(1) {
+    transition-delay: 0.1s;
+}
+
+.fade-up:nth-child(2) {
+    transition-delay: 0.2s;
+}
+
+.fade-up:nth-child(3) {
+    transition-delay: 0.3s;
+}
+
+.fade-up:nth-child(4) {
+    transition-delay: 0.4s;
+}
+
+/* Responsive tweaks */
+@media (max-width: 768px) {
+    .hero {
+        padding: 4rem 0 2.5rem;
+    }
+
+    .crown {
+        width: 70px;
+        height: 70px;
+    }
+
+    .hero-image {
+        border-radius: 12px;
+        margin-top: 2.5rem;
+    }
+
+    .voice-pill {
+        top: 14px;
+        right: 14px;
+        padding: .55rem .95rem;
+        font-size: 0.85rem;
+    }
+
+    .actions {
+        margin-top: 1.75rem;
+    }
+}

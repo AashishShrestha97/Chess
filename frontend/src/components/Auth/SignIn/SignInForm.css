@@ -1,0 +1,221 @@
+/* Right side container */
+.form-side {
+    display: grid;
+    place-items: center;
+    padding: clamp(2rem, 6vw, 3rem);
+    background: #1a1a1a;
+    overflow-y: auto;
+}
+
+/* Card - cleaner, more spacious design */
+.form-card {
+    width: min(520px, 92%);
+    background: transparent;
+    border: none;
+    border-radius: 0;
+    box-shadow: none;
+    padding: clamp(1.5rem, 4vw, 2.5rem);
+    color: #fff;
+    position: relative;
+}
+
+/* Heading */
+.title {
+    margin: 0 0 0.75rem 0;
+    font-weight: 700;
+    letter-spacing: -.01em;
+    font-size: clamp(2.2rem, 4.5vw, 3rem);
+    text-align: center;
+    color: #ffffff;
+}
+
+.subtitle {
+    margin: 0 auto 2rem;
+    color: #a8a8a8;
+    text-align: center;
+    font-size: 1.05rem;
+    font-weight: 400;
+}
+
+/* Google button */
+.btn-google {
+    width: 100%;
+    height: 52px;
+    border-radius: 8px;
+    background: transparent;
+    color: #eaeaea;
+    border: 1px solid #4a4a4a;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: .7rem;
+    cursor: pointer;
+    transition: all .2s ease;
+    font-size: 0.95rem;
+    font-weight: 500;
+}
+
+.btn-google:hover {
+    border-color: #666;
+    background: rgba(255, 255, 255, .02);
+}
+
+.google-icon {
+    font-size: 1.25rem;
+    display: flex;
+    align-items: center;
+}
+
+/* Divider */
+.divider {
+    display: grid;
+    grid-template-columns: 1fr auto 1fr;
+    align-items: center;
+    gap: 1.2rem;
+    margin: 1.8rem 0 1.5rem;
+}
+
+.divider .line {
+    height: 1px;
+    background: #3a3a3a;
+}
+
+.divider .text {
+    color: #888;
+    font-size: .75rem;
+    letter-spacing: .1em;
+    font-weight: 500;
+}
+
+/* Form */
+.form {
+    margin-top: 0;
+}
+
+.label {
+    display: block;
+    font-size: .92rem;
+    color: #d8d8d8;
+    margin: 0 0 .6rem 0;
+    font-weight: 500;
+}
+
+.field {
+    display: flex;
+    align-items: center;
+    gap: .75rem;
+    height: 52px;
+    padding: 0 1rem;
+    border-radius: 8px;
+    background: transparent;
+    border: 1px solid #3a3a3a;
+    color: #d8d8d8;
+    transition: all .2s ease;
+    margin-bottom: 1.2rem;
+}
+
+.field:focus-within {
+    border-color: #666;
+    background: rgba(255, 255, 255, .02);
+}
+
+.field svg {
+    color: #888;
+    font-size: 1.1rem;
+    flex-shrink: 0;
+}
+
+.field input {
+    background: transparent;
+    border: none;
+    outline: none;
+    color: #f3f3f3;
+    width: 100%;
+    font-size: .95rem;
+}
+
+.field input::placeholder {
+    color: #666;
+}
+
+/* Submit button - bright yellow */
+.btn-submit {
+    width: 100%;
+    margin-top: 1rem;
+    height: 52px;
+    border: none;
+    border-radius: 8px;
+    font-weight: 600;
+    font-size: 1rem;
+    background: #ffd700;
+    color: #000000;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: .5rem;
+    transition: all .2s ease;
+}
+
+.btn-submit:hover {
+    background: #ffed4e;
+    transform: translateY(-1px);
+}
+
+.btn-submit:active {
+    transform: translateY(0);
+}
+
+/* bottom note */
+.footnote {
+    text-align: center;
+    margin: 1.5rem 0 0 0;
+    color: #999;
+    font-size: .95rem;
+}
+
+.footnote a {
+    color: #ffd700;
+    font-weight: 600;
+    text-decoration: none;
+    transition: color .2s ease;
+}
+
+.footnote a:hover {
+    color: #ffed4e;
+}
+
+/* Responsive adjustments for signup form with more fields */
+@media (max-height: 800px) {
+    .form-card {
+        padding: clamp(1rem, 3vw, 2rem);
+    }
+
+    .title {
+        font-size: clamp(1.8rem, 4vw, 2.4rem);
+        margin-bottom: 0.5rem;
+    }
+
+    .subtitle {
+        margin-bottom: 1.5rem;
+        font-size: 0.95rem;
+    }
+
+    .field {
+        height: 48px;
+        margin-bottom: 1rem;
+    }
+
+    .btn-google {
+        height: 48px;
+    }
+
+    .btn-submit {
+        height: 48px;
+        margin-top: 0.75rem;
+    }
+
+    .divider {
+        margin: 1.3rem 0 1.2rem;
+    }
+}

@@ -1,0 +1,124 @@
+.cta-section {
+    text-align: center;
+    padding: 6rem 2rem;
+    background: linear-gradient(180deg, #0a0a0a 0%, #1a1a1a 50%, #0a0a0a 100%);
+    position: relative;
+    overflow: hidden;
+}
+
+.cta-section::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: radial-gradient(ellipse at center, rgba(255, 215, 0, 0.05) 0%, transparent 70%);
+    animation: ctaPulse 4s ease-in-out infinite;
+}
+
+.cta-section h2 {
+    font-size: 2.5rem;
+    margin-bottom: 1rem;
+    font-weight: 700;
+    letter-spacing: -0.5px;
+    position: relative;
+    z-index: 1;
+    animation: fadeInScale 0.8s ease-out;
+}
+
+.cta-section p {
+    color: #999;
+    margin-bottom: 2.5rem;
+    font-size: 1.1rem;
+    position: relative;
+    z-index: 1;
+    animation: fadeInScale 0.8s ease-out 0.2s backwards;
+}
+
+.cta-buttons {
+    display: flex;
+    justify-content: center;
+    gap: 1rem;
+    flex-wrap: wrap;
+    position: relative;
+    z-index: 1;
+    animation: fadeInScale 0.8s ease-out 0.4s backwards;
+}
+
+.cta-buttons .btn-primary,
+.cta-buttons .btn-secondary {
+    border: none;
+    border-radius: 50px;
+    padding: 1rem 2rem;
+    font-size: 1rem;
+    cursor: pointer;
+    transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+    font-weight: 600;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.cta-buttons .btn-primary {
+    background: linear-gradient(135deg, #ffd700 0%, #ffed4e 100%);
+    color: #0a0a0a;
+    box-shadow: 0 4px 15px rgba(255, 215, 0, 0.3);
+}
+
+.cta-buttons .btn-primary:hover {
+    box-shadow: 0 8px 30px rgba(255, 215, 0, 0.5);
+    transform: translateY(-3px) scale(1.05);
+}
+
+.cta-buttons .btn-primary:active {
+    transform: translateY(0) scale(1);
+}
+
+.cta-buttons .btn-secondary {
+    background: rgba(255, 215, 0, 0.05);
+    color: #ffd700;
+    border: 2px solid #ffd700;
+    backdrop-filter: blur(10px);
+}
+
+.cta-buttons .btn-secondary:hover {
+    background: rgba(255, 215, 0, 0.15);
+    border-color: #ffed4e;
+    transform: translateY(-3px) scale(1.05);
+    box-shadow: 0 6px 20px rgba(255, 215, 0, 0.3);
+}
+
+.cta-buttons .btn-secondary:active {
+    transform: translateY(0) scale(1);
+}
+
+@keyframes fadeInScale {
+    from {
+        opacity: 0;
+        transform: scale(0.95);
+    }
+
+    to {
+        opacity: 1;
+        transform: scale(1);
+    }
+}
+
+@keyframes ctaPulse {
+    0%, 100% {
+        opacity: 1;
+        transform: scale(1);
+    }
+
+    50% {
+        opacity: 0.8;
+        transform: scale(1.05);
+    }
+}
+
+@media (max-width: 768px) {
+    .cta-section h2 {
+        font-size: 2rem;
+    }
+}

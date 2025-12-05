@@ -1,0 +1,63 @@
+.left-panel {
+    background: #000000;
+    display: grid;
+    place-items: center;
+    padding: 4rem 2rem;
+    position: relative;
+    overflow: hidden;
+}
+
+/* Vertical divider line on the right edge */
+.left-panel::after {
+    content: "";
+    position: absolute;
+    top: 0;
+    right: 0;
+    width: 1px;
+    height: 100%;
+    background: rgba(255, 215, 0, .15);
+}
+
+.left-inner {
+    text-align: center;
+    width: min(560px, 86%);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+}
+
+.brand-mark {
+    width: clamp(120px, 14vw, 160px);
+    height: clamp(120px, 14vw, 160px);
+    object-fit: contain;
+    display: block;
+    margin: 0 0 2rem 0;
+    filter: drop-shadow(0 4px 24px rgba(255, 215, 0, .3));
+}
+
+.brand-title {
+    margin: 0;
+    font-size: clamp(2.2rem, 5vw, 3.4rem);
+    font-weight: 700;
+    letter-spacing: -.02em;
+    color: #fff;
+}
+
+.accent {
+    color: #ffd700;
+    text-shadow: 0 0 30px rgba(255, 215, 0, .6);
+}
+
+.brand-sub {
+    margin-top: 1rem;
+    color: #b8b8b8;
+    font-size: clamp(1.1rem, 2.6vw, 1.35rem);
+    font-weight: 400;
+}
+
+@media (max-width: 980px) {
+    .left-inner {
+        text-align: center;
+        margin: 0 auto;
+    }
+}

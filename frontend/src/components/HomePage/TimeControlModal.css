@@ -1,0 +1,242 @@
+.time-selector-dialog {
+    width: min(760px, 94vw);
+    background: linear-gradient(135deg, #1a1a1a 0%, #141414 100%);
+    border: 2px solid #4a9eff;
+    max-height: 85vh;
+    display: flex;
+    flex-direction: column;
+    border-radius: 16px;
+    box-shadow: 0 8px 32px rgba(74, 158, 255, 0.15);
+}
+
+.time-selector-dialog .modal-head {
+    padding: 24px 24px 16px;
+    border-bottom: 1px solid #2d2d2d;
+    flex-shrink: 0;
+}
+
+.time-controls-scroll {
+    overflow-y: auto;
+    flex: 1;
+    padding: 0;
+}
+
+.time-controls-scroll::-webkit-scrollbar {
+    width: 8px;
+}
+
+.time-controls-scroll::-webkit-scrollbar-track {
+    background: #1a1a1a;
+}
+
+.time-controls-scroll::-webkit-scrollbar-thumb {
+    background: linear-gradient(180deg, #4a9eff, #2a7edf);
+    border-radius: 4px;
+}
+
+.time-controls-scroll::-webkit-scrollbar-thumb:hover {
+    background: linear-gradient(180deg, #5aaeef, #3a8edf);
+}
+
+.time-category {
+    padding: 24px;
+    border-bottom: 1px solid #2d2d2d;
+}
+
+.time-category:last-child {
+    border-bottom: none;
+}
+
+.category-header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 16px;
+}
+
+.category-icon {
+    font-size: 1.4rem;
+    display: flex;
+    align-items: center;
+}
+
+.category-title {
+    font-size: 1.1rem;
+    font-weight: 600;
+    color: #ffd700;
+    margin: 0;
+    letter-spacing: 0.3px;
+    text-transform: uppercase;
+}
+
+.time-category.bullet .category-title {
+    color: #ff4d4d;
+}
+
+.time-category.blitz .category-title {
+    color: #ff9633;
+}
+
+.time-category.rapid .category-title {
+    color: #ffd700;
+}
+
+.time-category.classical .category-title {
+    color: #e74c3c;
+}
+
+.time-options-container {
+    display: grid;
+    gap: 12px;
+    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+}
+
+.time-option-card {
+    background: linear-gradient(135deg, #252525 0%, #1f1f1f 100%);
+    border: 2px solid #3d3d3d;
+    border-radius: 12px;
+    padding: 16px 12px;
+    text-align: center;
+    cursor: pointer;
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    position: relative;
+    overflow: hidden;
+    min-height: 100px;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+}
+
+.time-option-card::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: radial-gradient(circle at center, rgba(255, 215, 0, 0.08), transparent);
+    opacity: 0;
+    transition: opacity 0.3s ease;
+    pointer-events: none;
+}
+
+.time-option-card::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(135deg, rgba(74, 158, 255, 0.1), transparent);
+    opacity: 0;
+    transition: opacity 0.3s ease;
+    pointer-events: none;
+}
+
+.time-option-card:hover {
+    transform: translateY(-4px);
+    border-color: #4a9eff;
+    background: linear-gradient(135deg, #2d2d2d 0%, #252525 100%);
+    box-shadow: 0 8px 24px rgba(74, 158, 255, 0.25);
+}
+
+.time-option-card:hover::before {
+    opacity: 1;
+}
+
+.time-option-card:hover::after {
+    opacity: 1;
+}
+
+.time-option-card:active {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(74, 158, 255, 0.2);
+}
+
+.time-option-label {
+    font-weight: 700;
+    font-size: 1rem;
+    color: #ffffff;
+    margin-bottom: 2px;
+    letter-spacing: 0.2px;
+}
+
+.time-option-description {
+    color: #999;
+    font-size: .8rem;
+    margin-top: 2px;
+    line-height: 1.2;
+    font-weight: 400;
+}
+
+.time-format-hint {
+    text-align: center;
+    padding: 14px 24px 20px;
+    color: #666;
+    font-size: 0.8rem;
+    border-top: 1px solid #2d2d2d;
+    background: linear-gradient(180deg, #171717, #141414);
+    font-weight: 400;
+    flex-shrink: 0;
+}
+
+.time-selector-dialog .modal-head h3 {
+    font-size: 1.5rem;
+    font-weight: 700;
+    color: #4a9eff;
+    margin: 0 0 6px 0;
+    text-shadow: 0 2px 8px rgba(74, 158, 255, 0.2);
+}
+
+.time-selector-dialog .modal-head p {
+    font-size: 0.9rem;
+    color: #999;
+    margin: 0;
+    font-weight: 400;
+}
+
+/* Close button specific styling for time selector */
+.time-selector-dialog .x {
+    position: absolute;
+    top: 20px;
+    right: 20px;
+    background: transparent;
+    border: none;
+    color: #999;
+    font-size: 1.4rem;
+    cursor: pointer;
+    width: 32px;
+    height: 32px;
+    display: grid;
+    place-items: center;
+    border-radius: 8px;
+    transition: all 0.2s ease;
+}
+
+.time-selector-dialog .x:hover {
+    background: #2d2d2d;
+    color: #4a9eff;
+}
+
+/* Responsive */
+@media (max-width: 620px) {
+    .time-selector-dialog {
+        width: min(90vw, 400px);
+    }
+
+    .time-options-container {
+        grid-template-columns: repeat(auto-fit, minmax(100px, 1fr));
+        gap: 10px;
+    }
+
+    .time-selector-dialog .modal-head {
+        padding: 18px 18px 12px;
+    }
+
+    .time-format-hint {
+        padding: 12px 18px 16px;
+    }
+
+    .time-option-card {
+        padding: 12px 10px;
+        min-height: 90px;
+    }
+
+    .time-category {
+        padding: 16px;
+    }
+}

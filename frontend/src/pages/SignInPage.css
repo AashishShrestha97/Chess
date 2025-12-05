@@ -1,0 +1,32 @@
+/* Full-bleed dark background */
+.signin-wrap {
+    min-height: 100vh;
+    background: #000000;
+    display: grid;
+    place-items: stretch;
+}
+
+/* Two-column split - equal columns */
+.signin-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    min-height: 100vh;
+}
+
+@media (max-width: 980px) {
+    .signin-grid {
+        grid-template-columns: 1fr;
+    }
+}
+
+/* shared fade-up utility */
+.fade-up {
+    opacity: 0;
+    transform: translateY(32px);
+    transition: opacity .8s ease, transform .8s ease;
+}
+
+.fade-up.visible {
+    opacity: 1;
+    transform: translateY(0);
+}

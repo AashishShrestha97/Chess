@@ -1,0 +1,359 @@
+.playstyle {
+    position: relative;
+    padding: 32px 28px;
+    border-radius: 24px;
+    background: linear-gradient(180deg, rgba(20, 20, 20, 0.6) 0%, rgba(15, 15, 15, 0.8) 100%);
+    border: 2px solid transparent;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.6);
+    transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+    backdrop-filter: blur(10px);
+    overflow: hidden;
+}
+
+.playstyle::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    border-radius: 24px;
+    padding: 2px;
+    background: linear-gradient(135deg, rgba(80, 80, 80, 0.3), rgba(40, 40, 40, 0.3));
+    -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+    -webkit-mask-composite: xor;
+    mask-composite: exclude;
+    opacity: 0;
+    transition: opacity 0.4s ease;
+}
+
+.playstyle:hover {
+    transform: translateY(-6px);
+    box-shadow: 0 16px 48px rgba(0, 0, 0, 0.8);
+}
+
+.playstyle:hover::before {
+    opacity: 1;
+}
+
+/* Voice variant - gold/yellow theme */
+.playstyle.voice {
+    background: linear-gradient(135deg, rgba(50, 45, 20, 0.4) 0%, rgba(30, 25, 10, 0.6) 100%);
+    border: 2px solid rgba(255, 215, 0, 0.4);
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.6), 0 0 0 1px rgba(255, 215, 0, 0.1) inset;
+}
+
+.playstyle.voice::before {
+    background: linear-gradient(135deg, rgba(255, 215, 0, 0.6), rgba(255, 200, 0, 0.4));
+}
+
+.playstyle.voice:hover {
+    border-color: rgba(255, 215, 0, 0.6);
+    box-shadow: 0 16px 48px rgba(255, 215, 0, 0.2), 0 0 60px rgba(255, 215, 0, 0.15);
+}
+
+/* Classic variant - remains subtle */
+.playstyle:not(.voice) {
+    border: 2px solid rgba(100, 100, 100, 0.3);
+}
+
+.playstyle:not(.voice):hover {
+    border-color: rgba(120, 120, 120, 0.5);
+}
+
+.ps-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 24px;
+}
+
+.ps-ico {
+    width: 80px;
+    height: 80px;
+    display: grid;
+    place-items: center;
+    border-radius: 20px;
+    font-size: 2.5rem;
+    transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+    position: relative;
+}
+
+/* Voice icon - yellow/gold background */
+.playstyle.voice .ps-ico {
+    background: linear-gradient(135deg, #ffd700, #f3c300);
+    box-shadow: 0 8px 24px rgba(255, 215, 0, 0.4), 0 0 0 1px rgba(255, 255, 255, 0.1) inset;
+}
+
+.playstyle.voice:hover .ps-ico {
+    transform: scale(1.05) rotate(-5deg);
+    box-shadow: 0 12px 32px rgba(255, 215, 0, 0.5), 0 0 0 1px rgba(255, 255, 255, 0.2) inset;
+}
+
+/* Classic icon - red/dark background */
+.playstyle:not(.voice) .ps-ico {
+    background: linear-gradient(135deg, #8b2424, #6b1a1a);
+    box-shadow: 0 8px 24px rgba(139, 36, 36, 0.5), 0 0 0 1px rgba(255, 255, 255, 0.05) inset;
+}
+
+.playstyle:not(.voice):hover .ps-ico {
+    transform: scale(1.05) rotate(5deg);
+    box-shadow: 0 12px 32px rgba(139, 36, 36, 0.6), 0 0 0 1px rgba(255, 255, 255, 0.1) inset;
+}
+
+.ps-badge {
+    font-size: 0.8rem;
+    padding: 6px 14px;
+    border-radius: 999px;
+    background: rgba(255, 215, 0, 0.15);
+    color: #ffd700;
+    border: 1px solid rgba(255, 215, 0, 0.4);
+    font-weight: 700;
+    box-shadow: 0 2px 12px rgba(255, 215, 0, 0.2);
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    transition: all 0.3s ease;
+    letter-spacing: 0.3px;
+}
+
+.ps-badge::before {
+    content: '⚡';
+    font-size: 1rem;
+}
+
+.playstyle:hover .ps-badge {
+    background: rgba(255, 215, 0, 0.25);
+    border-color: rgba(255, 215, 0, 0.6);
+    box-shadow: 0 4px 16px rgba(255, 215, 0, 0.3);
+}
+
+/* Classic badge if needed */
+.playstyle:not(.voice) .ps-badge {
+    background: rgba(200, 200, 200, 0.1);
+    color: #cfcfcf;
+    border: 1px solid rgba(200, 200, 200, 0.2);
+}
+
+.playstyle:not(.voice) .ps-badge::before {
+    content: '';
+}
+
+.ps-title {
+    margin: 0 0 12px;
+    font-size: 1.75rem;
+    font-weight: 700;
+    color: #fff;
+    letter-spacing: -0.5px;
+    transition: color 0.3s ease;
+}
+
+.playstyle:hover .ps-title {
+    color: #ffffff;
+}
+
+.ps-sub {
+    color: #b0b0b0;
+    margin: 0 0 32px;
+    font-size: 1rem;
+    line-height: 1.6;
+    transition: color 0.3s ease;
+}
+
+.playstyle:hover .ps-sub {
+    color: #d0d0d0;
+}
+
+.ps-list {
+    margin: 0 0 32px;
+    padding: 0;
+    list-style: none;
+    display: grid;
+    gap: 14px;
+}
+
+.ps-list li {
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+    color: #d9d9d9;
+    font-size: 0.95rem;
+    line-height: 1.5;
+    transition: all 0.3s ease;
+    padding-left: 4px;
+}
+
+.playstyle:hover .ps-list li {
+    color: #e9e9e9;
+    transform: translateX(4px);
+}
+
+.ps-list .dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    display: inline-block;
+    margin-top: 6px;
+    flex-shrink: 0;
+    transition: all 0.3s ease;
+}
+
+/* Voice variant - yellow dots */
+.playstyle.voice .ps-list .dot {
+    background: #ffd700;
+    box-shadow: 0 0 0 3px rgba(255, 215, 0, 0.2);
+}
+
+.playstyle.voice:hover .ps-list .dot {
+    background: #ffed4e;
+    box-shadow: 0 0 0 4px rgba(255, 215, 0, 0.3), 0 0 12px rgba(255, 215, 0, 0.5);
+}
+
+/* Classic variant - red dots */
+.playstyle:not(.voice) .ps-list .dot {
+    background: #d64b4b;
+    box-shadow: 0 0 0 3px rgba(214, 75, 75, 0.2);
+}
+
+.playstyle:not(.voice):hover .ps-list .dot {
+    background: #ff6d6d;
+    box-shadow: 0 0 0 4px rgba(214, 75, 75, 0.3), 0 0 12px rgba(214, 75, 75, 0.4);
+}
+
+.ps-cta {
+    width: 100%;
+    margin-top: 8px;
+    padding: 16px 24px;
+    border-radius: 16px;
+    font-size: 1.05rem;
+    font-weight: 700;
+    border: none;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    letter-spacing: 0.3px;
+    position: relative;
+    overflow: hidden;
+}
+
+.ps-cta::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(135deg, rgba(255, 255, 255, 0.1), rgba(255, 255, 255, 0));
+    opacity: 0;
+    transition: opacity 0.3s ease;
+}
+
+.ps-cta:hover::before {
+    opacity: 1;
+}
+
+.ps-cta span {
+    transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    display: inline-block;
+}
+
+.ps-cta:hover span {
+    transform: scale(1.2);
+}
+
+.btn-gold {
+    background: linear-gradient(135deg, #ffd700, #f3c300);
+    color: #000;
+    box-shadow: 0 6px 20px rgba(255, 215, 0, 0.4), 0 0 0 1px rgba(255, 255, 255, 0.1) inset;
+    font-weight: 700;
+}
+
+.btn-gold:hover {
+    background: linear-gradient(135deg, #ffed4e, #ffd700);
+    box-shadow: 0 8px 28px rgba(255, 215, 0, 0.6), 0 0 0 1px rgba(255, 255, 255, 0.2) inset;
+    transform: translateY(-2px);
+}
+
+.btn-gold:active {
+    transform: translateY(0);
+    box-shadow: 0 4px 16px rgba(255, 215, 0, 0.5);
+}
+
+.btn-dark {
+    background: linear-gradient(135deg, #2a2a2a, #1a1a1a);
+    color: #fff;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.4);
+}
+
+.btn-dark:hover {
+    background: linear-gradient(135deg, #353535, #252525);
+    border-color: rgba(255, 255, 255, 0.15);
+    box-shadow: 0 8px 28px rgba(0, 0, 0, 0.6);
+    transform: translateY(-2px);
+}
+
+.btn-dark:active {
+    transform: translateY(0);
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5);
+}
+
+/* Staggered animation for list items */
+.ps-list li:nth-child(1) {
+    transition-delay: 0.05s;
+}
+
+.ps-list li:nth-child(2) {
+    transition-delay: 0.1s;
+}
+
+.ps-list li:nth-child(3) {
+    transition-delay: 0.15s;
+}
+
+.ps-list li:nth-child(4) {
+    transition-delay: 0.2s;
+}
+
+/* Responsive adjustments */
+@media (max-width: 900px) {
+    .playstyle {
+        padding: 24px 20px;
+    }
+
+    .ps-ico {
+        width: 70px;
+        height: 70px;
+        font-size: 2.2rem;
+    }
+
+    .ps-title {
+        font-size: 1.5rem;
+    }
+}
+
+@media (max-width: 560px) {
+    .playstyle {
+        padding: 20px 16px;
+    }
+
+    .ps-ico {
+        width: 64px;
+        height: 64px;
+        font-size: 2rem;
+    }
+
+    .ps-title {
+        font-size: 1.35rem;
+    }
+
+    .ps-sub {
+        font-size: 0.95rem;
+    }
+
+    .ps-list li {
+        font-size: 0.9rem;
+    }
+
+    .ps-cta {
+        padding: 14px 20px;
+        font-size: 1rem;
+    }
+}

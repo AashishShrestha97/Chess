@@ -1,0 +1,50 @@
+# Sensitive Configuration Files
+application.properties
+application-*.properties
+src/main/resources/application.properties
+src/test/resources/application.properties
+/backend/src/main/resources/application.properties
+.env
+.env.local
+
+# Maven
+target/
+pom.xml.tag
+pom.xml.releaseBackup
+pom.xml.versionsBackup
+pom.xml.next
+release.properties
+dependency-reduced-pom.xml
+buildNumber.properties
+.mvn/timing.properties
+.mvn/wrapper/maven-wrapper.jar
+
+# Logs
+*.log
+backend.log
+backend_new.log
+
+# IDEs
+.vscode/
+.idea/
+*.iml
+*.ipr
+*.iws
+.project
+.classpath
+.settings/
+*.swp
+*.swo
+*~
+
+# Operating System
+.DS_Store
+Thumbs.db
+
+# Build outputs
+build/
+out/
+*.class
+
+# Test outputs
+*.tsbuildinfo

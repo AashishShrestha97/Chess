@@ -1,0 +1,213 @@
+.opponent-selector-dialog {
+    width: min(540px, 92vw);
+    background: #1a1a1a;
+    border: 1px solid #2d2d2d;
+}
+
+.opponent-selector-dialog .modal-head {
+    padding: 24px 24px 18px;
+    border-bottom: 1px solid #2d2d2d;
+}
+
+.opponent-selector-dialog .modal-head h3 {
+    font-size: 1.5rem;
+    font-weight: 700;
+    color: #ffffff;
+    margin: 0 0 6px 0;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.opponent-selector-dialog .modal-head .small {
+    font-size: 1.1rem;
+    color: #ffd700;
+    font-weight: 600;
+}
+
+.opponent-selector-dialog .modal-head p {
+    font-size: 0.9rem;
+    color: #999;
+    margin: 0;
+    font-weight: 400;
+}
+
+.opponent-options-list {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    padding: 20px 24px 24px;
+}
+
+.opponent-option-item {
+    display: grid;
+    grid-template-columns: 56px 1fr;
+    gap: 16px;
+    align-items: center;
+    padding: 18px 20px;
+    border-radius: 14px;
+    background: linear-gradient(135deg, #1f1f1f 0%, #1a1a1a 100%);
+    border: 1.5px solid #2d2d2d;
+    cursor: pointer;
+    transition: all .2s cubic-bezier(0.4, 0, 0.2, 1);
+    position: relative;
+    overflow: hidden;
+    text-align: left;
+}
+
+.opponent-option-item::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: radial-gradient(circle at left, rgba(255, 215, 0, 0.04), transparent);
+    opacity: 0;
+    transition: opacity .2s ease;
+}
+
+.opponent-option-item:hover::before {
+    opacity: 1;
+}
+
+.opponent-option-item:hover {
+    transform: translateY(-2px);
+    border-color: rgba(255, 215, 0, .4);
+    box-shadow:
+        0 8px 20px rgba(0, 0, 0, .5),
+        0 0 0 1px rgba(255, 215, 0, .1) inset,
+        0 0 30px rgba(255, 215, 0, .06);
+}
+
+.opponent-option-item:active {
+    transform: translateY(0);
+}
+
+/* Highlighted option (Play Random) */
+.opponent-option-item.highlight-option {
+    background: linear-gradient(135deg, rgba(255, 215, 0, .08) 0%, rgba(255, 215, 0, .03) 100%);
+    border-color: rgba(255, 215, 0, .25);
+}
+
+.opponent-option-item.highlight-option::before {
+    background: radial-gradient(circle at left, rgba(255, 215, 0, 0.08), transparent);
+}
+
+.opponent-option-item.highlight-option:hover {
+    border-color: rgba(255, 215, 0, .5);
+    box-shadow:
+        0 10px 24px rgba(0, 0, 0, .6),
+        0 0 0 1px rgba(255, 215, 0, .15) inset,
+        0 0 40px rgba(255, 215, 0, .12);
+}
+
+.opponent-option-icon {
+    width: 56px;
+    height: 56px;
+    border-radius: 14px;
+    display: grid;
+    place-items: center;
+    font-size: 24px;
+    transition: transform .2s ease;
+    flex-shrink: 0;
+}
+
+.opponent-option-item:hover .opponent-option-icon {
+    transform: scale(1.08);
+}
+
+.opponent-option-icon.icon-random {
+    background: linear-gradient(135deg, rgba(255, 215, 0, .22) 0%, rgba(255, 215, 0, .12) 100%);
+    color: #ffd700;
+    box-shadow: 0 4px 12px rgba(255, 215, 0, .18);
+}
+
+.opponent-option-icon.icon-friends {
+    background: linear-gradient(135deg, rgba(99, 102, 241, .20) 0%, rgba(99, 102, 241, .10) 100%);
+    color: #818cf8;
+    box-shadow: 0 4px 12px rgba(99, 102, 241, .15);
+}
+
+.opponent-option-content {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    min-width: 0;
+}
+
+.opponent-option-title {
+    font-weight: 700;
+    font-size: 1.05rem;
+    color: #ffffff;
+    letter-spacing: 0.2px;
+    line-height: 1.3;
+}
+
+.opponent-option-description {
+    color: #888;
+    font-size: .88rem;
+    line-height: 1.4;
+    font-weight: 400;
+}
+
+/* Close button specific styling */
+.opponent-selector-dialog .x {
+    position: absolute;
+    top: 20px;
+    right: 20px;
+    background: transparent;
+    border: none;
+    color: #999;
+    font-size: 1.4rem;
+    cursor: pointer;
+    width: 32px;
+    height: 32px;
+    display: grid;
+    place-items: center;
+    border-radius: 8px;
+    transition: all .2s ease;
+}
+
+.opponent-selector-dialog .x:hover {
+    background: #2d2d2d;
+    color: #fff;
+}
+
+/* Responsive */
+@media (max-width: 620px) {
+    .opponent-selector-dialog {
+        width: min(540px, 90vw);
+    }
+
+    .opponent-selector-dialog .modal-head {
+        padding: 20px 56px 16px 20px;
+    }
+
+    .opponent-selector-dialog .modal-head h3 {
+        font-size: 1.35rem;
+        flex-wrap: wrap;
+    }
+
+    .opponent-options-list {
+        padding: 18px 20px 20px;
+        gap: 12px;
+    }
+
+    .opponent-option-item {
+        grid-template-columns: 52px 1fr;
+        gap: 14px;
+        padding: 16px 18px;
+    }
+
+    .opponent-option-icon {
+        width: 52px;
+        height: 52px;
+        font-size: 22px;
+    }
+
+    .opponent-option-title {
+        font-size: 1rem;
+    }
+
+    .opponent-option-description {
+        font-size: .85rem;
+    }
+}
