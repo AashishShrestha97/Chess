@@ -1,5 +1,6 @@
 // src/utils/deepgramVoiceCommandService.ts
-// Enhanced Voice Command Service with better accent handling
+// Enhanced Voice Command Service - NO TTS INTERRUPTION
+// Users must hear full messages before speaking
 
 import { deepgramSTTService } from "./deepgramSTTService";
 import { deepgramTTSService } from "./deepgramTTSService";
@@ -42,7 +43,8 @@ class DeepgramVoiceCommandService {
   }
 
   /**
-   * Start listening for voice commands with enhanced settings for South Asian accents
+   * Start listening for voice commands
+   * Enhanced for South Asian accents
    */
   async startListening(config: DeepgramVoiceCommandConfig): Promise<void> {
     this.config = config;
@@ -113,7 +115,8 @@ class DeepgramVoiceCommandService {
   }
 
   /**
-   * Handle transcript from Deepgram with buffering for better accuracy
+   * Handle transcript from Deepgram
+   * NO INTERRUPTION - transcripts queued during TTS playback
    */
   private handleTranscript(
     transcript: string,
@@ -144,10 +147,11 @@ class DeepgramVoiceCommandService {
       `📝 Final transcript: "${transcript}" (confidence: ${confidence.toFixed(2)})`
     );
 
-    // Smart interrupt: Stop TTS when user speaks
+    // CRITICAL CHANGE: Don't interrupt TTS
+    // If TTS is speaking, ignore the transcript (user should wait)
     if (deepgramTTSService.isSpeakingNow()) {
-      console.log("🎤 User speaking - stopping TTS to listen");
-      deepgramTTSService.stop();
+      console.log("⏸️ TTS is speaking - ignoring transcript (user must wait for speech to finish)");
+      return;
     }
 
     // Prevent duplicate commands
@@ -194,20 +198,8 @@ class DeepgramVoiceCommandService {
         return;
       }
 
-      // ALWAYS process stop command
-      if (command.intent === "VOICE_STOP") {
-        console.log("🛑 Stop command - halting speech");
-        deepgramTTSService.stop();
-        this.config?.onCommand?.(command);
-        return;
-      }
-
-      // ALWAYS process repeat command
-      if (command.intent === "VOICE_REPEAT") {
-        console.log("🔁 Repeat command");
-        this.config?.onCommand?.(command);
-        return;
-      }
+      // Stop and repeat commands removed since we don't interrupt TTS
+      // Users must wait for TTS to finish
 
       // Only process other commands if voice is enabled
       if (!this.isVoiceEnabled) {
@@ -248,14 +240,14 @@ class DeepgramVoiceCommandService {
   }
 
   /**
-   * Pause listening
+   * Pause listening (e.g., during TTS)
    */
   pauseListening(): void {
     deepgramSTTService.pauseListening();
   }
 
   /**
-   * Resume listening
+   * Resume listening (after TTS)
    */
   resumeListening(): void {
     deepgramSTTService.resumeListening();

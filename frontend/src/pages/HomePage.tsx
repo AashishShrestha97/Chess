@@ -896,7 +896,7 @@ const HomePage: React.FC = () => {
       }
 
       // Wait for component to mount
-      await new Promise((resolve) => setTimeout(resolve, 500));
+      await new Promise((resolve) => setTimeout(resolve, 200));
 
       const welcomeText = `Welcome to Chess 4 Everyone! You can control the game with your voice. 
       Try saying "Start voice chess" to begin a voice game, or "Start classic chess" for traditional gameplay. 
@@ -1013,7 +1013,7 @@ const HomePage: React.FC = () => {
   };
 
   // Helper to speak with voice pause/resume
-  const speak = async (text: string, rate: number = 1.1) => {
+  const speak = async (text: string) => {
     if (!text || !text.trim()) return;
 
     try {
@@ -1022,9 +1022,10 @@ const HomePage: React.FC = () => {
         deepgramVoiceCommandService.pauseListening();
       }
 
+      // Always use rate 1.0 for stability and clarity
       await deepgramTTSService.speak({
         text,
-        rate,
+        rate: 1.0,
         volume: 0.8,
       });
 
@@ -1076,7 +1077,7 @@ const HomePage: React.FC = () => {
     const message = timeControlInfo[category];
     if (message) {
       try {
-        await speak(message, 1.0);
+        await speak(message);
       } catch (e) {
         console.warn("Failed to announce time controls:", e);
       }
@@ -1097,16 +1098,13 @@ const HomePage: React.FC = () => {
     // Voice control commands - ALWAYS processed
     if (command.intent === "VOICE_ON") {
       deepgramVoiceCommandService.setVoiceEnabled(true);
-      await speak("Voice commands enabled", 1.2);
+      await speak("Voice commands enabled");
       return;
     }
 
     if (command.intent === "VOICE_OFF") {
       deepgramVoiceCommandService.setVoiceEnabled(false);
-      await speak(
-        "Voice commands disabled. Say voice on to enable again.",
-        1.2
-      );
+      await speak("Voice commands disabled. Say voice on to enable again.");
       return;
     }
 
@@ -1222,7 +1220,7 @@ const HomePage: React.FC = () => {
     const message = feedbackMessages[intent];
     if (message) {
       try {
-        await speak(message, 1.3);
+        await speak(message);
       } catch (e) {
         console.warn("Feedback speech failed:", e);
       }
@@ -1233,7 +1231,7 @@ const HomePage: React.FC = () => {
       const announcement =
         "Choose your opponent. Say play random to play against a random opponent, or say play with friends to play with someone you know.";
       try {
-        await speak(announcement, 1.0);
+        await speak(announcement);
       } catch (e) {
         console.warn("Failed to announce versus options:", e);
       }
@@ -1252,7 +1250,7 @@ const HomePage: React.FC = () => {
       const announcement =
         "Voice chess started. You can select from the following time control categories. Bullet for ultra-fast games. Blitz for fast games. Rapid for medium speed games. Or Classical for slow games. You can say the category name or say time controls followed by the category name to hear all options.";
       try {
-        await speak(announcement, 1.0);
+        await speak(announcement);
       } catch (e) {
         console.warn("Failed to announce time controls:", e);
       }

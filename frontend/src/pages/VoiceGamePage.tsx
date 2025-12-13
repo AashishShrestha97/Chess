@@ -190,7 +190,7 @@ const VoiceGamePage: React.FC<VoiceGamePageProps> = ({
   /**
    * Enhanced speak function with natural chess notation pronunciation
    */
-  async function speak(text: string, rate: number = 1.0) {
+  async function speak(text: string) {
     if (!text || !text.trim()) return;
     if (!isSoundOnRef.current) return;
 
@@ -199,6 +199,7 @@ const VoiceGamePage: React.FC<VoiceGamePageProps> = ({
       let spokenText = text;
 
       // Make chess notation more natural for TTS
+      // Handle standard algebraic notation (e.g., "Nf3", "Qd4")
       spokenText = spokenText.replace(
         /([NBRQK])([a-h][1-8])/g,
         (match, piece, square) => {
@@ -216,26 +217,69 @@ const VoiceGamePage: React.FC<VoiceGamePageProps> = ({
         }
       );
 
-      // Handle captures
-      spokenText = spokenText.replace(/x([a-h][1-8])/g, (match, square) => {
+      // Handle captures (e.g., "Nxe5" -> "Knight takes e5")
+      spokenText = spokenText.replace(
+        /([NBRQK])x([a-h][1-8])/g,
+        (match, piece, square) => {
+          const pieceNames: { [key: string]: string } = {
+            N: "Knight",
+            B: "Bishop",
+            R: "Rook",
+            Q: "Queen",
+            K: "King",
+          };
+          const pieceName = pieceNames[piece] || piece;
+          const file = square[0].toUpperCase();
+          const rank = square[1];
+          return `${pieceName} takes ${file} ${rank}`;
+        }
+      );
+
+      // Handle pawn captures (e.g., "exd5" -> "e pawn takes d5")
+      spokenText = spokenText.replace(
+        /([a-h])x([a-h][1-8])/g,
+        (match, fromFile, square) => {
+          const file = square[0].toUpperCase();
+          const rank = square[1];
+          return `${fromFile} pawn takes ${file} ${rank}`;
+        }
+      );
+
+      // Handle simple pawn moves (e.g., "e4" -> "e file to 4")
+      // Only if it looks like a move (not preceded by piece letter)
+      spokenText = spokenText.replace(/\b([a-h][1-8])\b/g, (match, square) => {
+        // Don't replace if it's part of a piece move we already processed
+        if (/\b[NBRQK]\s/.test(spokenText)) {
+          return match;
+        }
         const file = square[0].toUpperCase();
         const rank = square[1];
-        return `takes ${file} ${rank}`;
+        return `${file} ${rank}`;
       });
 
+      // Handle castling
+      spokenText = spokenText.replace(/O-O-O/gi, "castles queenside");
+      spokenText = spokenText.replace(/O-O/gi, "castles kingside");
+
       // Add pauses for clarity
-      spokenText = spokenText.replace(/\./g, ". ");
-      spokenText = spokenText.replace(/!/g, "! ");
+      spokenText = spokenText.replace(/\.\s+/g, ". ");
+      spokenText = spokenText.replace(/!\s+/g, "! ");
+      spokenText = spokenText.replace(/,\s+/g, ", ");
+
+      // Increase clarity by ensuring good spacing
+      spokenText = spokenText.replace(/\s+/g, " ").trim();
 
       // Pause voice listening while TTS speaks
       if (deepgramVoiceCommandService.isActive()) {
         deepgramVoiceCommandService.pauseListening();
       }
 
+      // Always use rate 1.0 for stability and clarity
+      // Variable rates cause audio glitches and distortion
       await deepgramTTSService.speak({
         text: spokenText,
-        rate,
-        volume: 0.9,
+        rate: 1.0,
+        volume: 0.85,
       });
 
       // Resume listening
@@ -299,7 +343,7 @@ const VoiceGamePage: React.FC<VoiceGamePageProps> = ({
         const moreText =
           legalMoves.length > 5 ? `, and ${legalMoves.length - 5} more` : "";
 
-        speak(`That move is not legal. Try: ${moveList}${moreText}`, 1.1);
+        speak(`That move is not legal. Try: ${moveList}${moreText}`);
         setStatusMessage("Illegal move - try again");
       }
       return false;
@@ -327,11 +371,11 @@ const VoiceGamePage: React.FC<VoiceGamePageProps> = ({
 
     // Enhanced move announcements
     if (source === "voice") {
-      // Confirm user's move with natural language
-      speak(`You played ${move.san}`, 1.0);
+      // Confirm user's move with natural language - faster for feedback
+      speak(`You played ${move.san}`);
     } else if (source === "ai") {
       // Announce opponent's move clearly
-      speak(`Computer plays ${move.san}`, 1.0);
+      speak(`Computer plays ${move.san}`);
     }
 
     // Game end checks
@@ -342,7 +386,7 @@ const VoiceGamePage: React.FC<VoiceGamePageProps> = ({
       gameOverRef.current = true;
       setWinner(winColor);
       setStatusMessage(msg);
-      speak(msg, 1.0);
+      speak(msg);
     } else if (game.isDraw()) {
       let msg = "The game is drawn";
       if (game.isStalemate()) {
@@ -359,7 +403,7 @@ const VoiceGamePage: React.FC<VoiceGamePageProps> = ({
       speak(msg);
     } else if (game.isCheck()) {
       setStatusMessage("Check!");
-      speak("Check!", 1.2);
+      speak("Check!");
     } else {
       setStatusMessage(sideToMove === "w" ? "White to move" : "Black to move");
     }
@@ -406,7 +450,7 @@ const VoiceGamePage: React.FC<VoiceGamePageProps> = ({
     blackTimeWarned30.current = false;
     blackTimeWarned10.current = false;
 
-    speak("New game started. You play as white", 1.1);
+    speak("New game started. You play as white");
   }
 
   /**
@@ -433,17 +477,17 @@ const VoiceGamePage: React.FC<VoiceGamePageProps> = ({
     // Voice control
     else if (command.intent === "VOICE_ON") {
       deepgramVoiceCommandService.setVoiceEnabled(true);
-      await speak("Voice commands enabled", 1.1);
+      await speak("Voice commands enabled");
       status = "Executed";
     } else if (command.intent === "VOICE_OFF") {
       deepgramVoiceCommandService.setVoiceEnabled(false);
-      await speak("Voice commands disabled", 1.1);
+      await speak("Voice commands disabled");
       status = "Executed";
     }
     // Game controls
     else if (text.includes("flip board") || text.includes("flip the board")) {
       setBoardOrientation((prev) => (prev === "white" ? "black" : "white"));
-      await speak("Board flipped", 1.1);
+      await speak("Board flipped");
       status = "Executed";
     } else if (text.includes("new game") || text.includes("restart game")) {
       handleNewGame();
@@ -456,9 +500,9 @@ const VoiceGamePage: React.FC<VoiceGamePageProps> = ({
       text.includes("what did")
     ) {
       if (lastMoveRef.current) {
-        await speak(`The last move was ${lastMoveRef.current}`, 1.1);
+        await speak(`The last move was ${lastMoveRef.current}`);
       } else {
-        await speak("No moves have been played yet", 1.1);
+        await speak("No moves have been played yet");
       }
       status = "Executed";
     }
@@ -474,16 +518,16 @@ const VoiceGamePage: React.FC<VoiceGamePageProps> = ({
         legalMoves.length > 6
           ? `, and ${legalMoves.length - 6} more moves`
           : "";
-      await speak(`You can play: ${moveList}${moreText}`, 1.0);
+      await speak(`You can play: ${moveList}${moreText}`);
       status = "Executed";
     }
     // Chess move parsing
     else {
       if (gameOverRef.current) {
-        await speak("The game is over. Say 'new game' to play again", 1.1);
+        await speak("The game is over. Say 'new game' to play again");
         status = "Ignored";
       } else if (gameRef.current.turn() !== "w") {
-        await speak("Please wait, it's the computer's turn", 1.1);
+        await speak("Please wait, it's the computer's turn");
         status = "Error";
       } else {
         // Enhanced chess move parsing
@@ -499,7 +543,7 @@ const VoiceGamePage: React.FC<VoiceGamePageProps> = ({
           } else {
             const legalMoves = gameRef.current.moves();
             const moveList = legalMoves.slice(0, 5).join(", ");
-            await speak(`Invalid move. Try: ${moveList}`, 1.1);
+            await speak(`Invalid move. Try: ${moveList}`);
             setStatusMessage("Illegal move");
             status = "Error";
           }
@@ -507,7 +551,7 @@ const VoiceGamePage: React.FC<VoiceGamePageProps> = ({
           // Failed to parse - provide helpful feedback
           const legalMoves = gameRef.current.moves();
           const moveList = legalMoves.slice(0, 5).join(", ");
-          await speak(`I didn't understand that move. Try: ${moveList}`, 1.1);
+          await speak(`I didn't understand that move. Try: ${moveList}`);
           status = "Error";
         }
       }
@@ -563,27 +607,19 @@ const VoiceGamePage: React.FC<VoiceGamePageProps> = ({
         console.warn("⚠️ Failed to initialize Deepgram:", e);
       }
 
-      await new Promise((resolve) => setTimeout(resolve, 800));
+      await new Promise((resolve) => setTimeout(resolve, 300));
 
-      const intro = `Welcome to Voice Chess! You are playing as white against the computer.
-
-To make moves, you can say:
-- Just the square, like "E 4" or "D 4"
-- Piece and square, like "Knight to F 3" or "Bishop to C 4"
-- Captures, like "Knight takes E 5" or "Pawn takes D 5"
-- Special moves, like "Castle king side" or "Castle queen side"
-
-You can also say:
-- "New game" to restart
-- "Flip board" to rotate the view
-- "What move" to hear the last move again
-- "Legal moves" to hear your options
-- "Stop" to stop me from talking
-
-Voice recognition is now active. Make your first move whenever you're ready!`;
+      // Shorter, faster intro - reduced from ~600 words to ~60 words
+      const intro1 = `Welcome to Voice Chess! You are playing as white against the computer.`;
+      const intro2 = `To move, say the square like E4, or piece like Knight to F3. Say legal moves for options. Ready? Make your first move!`;
 
       try {
-        await speak(intro, 0.95);
+        // Quick first greeting
+        await speak(intro1);
+        console.log("✅ Intro part 1 completed");
+
+        // Brief instructions
+        await speak(intro2);
         console.log("✅ Intro completed");
       } catch (e) {
         console.warn("❌ Intro failed:", e);
@@ -606,10 +642,10 @@ Voice recognition is now active. Make your first move whenever you're ready!`;
         setWhiteTime((prev) => {
           if (prev === 30 && !whiteTimeWarned30.current) {
             whiteTimeWarned30.current = true;
-            speak("You have 30 seconds left", 1.2);
+            speak("You have 30 seconds left");
           } else if (prev === 10 && !whiteTimeWarned10.current) {
             whiteTimeWarned10.current = true;
-            speak("10 seconds remaining!", 1.3);
+            speak("10 seconds remaining!");
           }
 
           if (prev <= 1) {
@@ -624,10 +660,10 @@ Voice recognition is now active. Make your first move whenever you're ready!`;
         setBlackTime((prev) => {
           if (prev === 30 && !blackTimeWarned30.current) {
             blackTimeWarned30.current = true;
-            speak("Computer has 30 seconds left", 1.1);
+            speak("Computer has 30 seconds left");
           } else if (prev === 10 && !blackTimeWarned10.current) {
             blackTimeWarned10.current = true;
-            speak("Computer has 10 seconds!", 1.2);
+            speak("Computer has 10 seconds!");
           }
 
           if (prev <= 1) {
@@ -647,10 +683,12 @@ Voice recognition is now active. Make your first move whenever you're ready!`;
     const initVoice = async () => {
       if (voiceInitializedRef.current) return;
 
-      // Wait for intro to finish
-      await new Promise((resolve) => setTimeout(resolve, 15000));
+      // Wait for intro to finish - reduced from 15s to 6s
+      // Intro parts: ~3s (intro1) + ~2.5s (intro2) + buffer
+      await new Promise((resolve) => setTimeout(resolve, 6000));
       voiceInitializedRef.current = true;
 
+      console.log("🎤 Voice recognition ready");
       startVoiceListening();
     };
 

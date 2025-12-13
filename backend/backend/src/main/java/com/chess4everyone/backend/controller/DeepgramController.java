@@ -64,18 +64,31 @@ public class DeepgramController {
      * Convert text to speech
      */
     @PostMapping(value = "/speak", produces = MediaType.APPLICATION_OCTET_STREAM_VALUE)
-    public ResponseEntity<byte[]> speak(@RequestBody Map<String, String> request) {
+    public ResponseEntity<?> speak(@RequestBody Map<String, String> request) {
         try {
             String text = request.get("text");
             String voice = request.getOrDefault("voice", "aura-asteria-en");
             
+            if (text == null || text.isEmpty()) {
+                Map<String, String> error = new HashMap<>();
+                error.put("error", "Text parameter is required and cannot be empty");
+                return ResponseEntity.badRequest().body(error);
+            }
+            
+            System.out.println("✅ TTS /speak endpoint called with text: " + text.substring(0, Math.min(50, text.length())));
             byte[] audioData = deepgramService.textToSpeech(text, voice);
+            System.out.println("✅ TTS /speak endpoint returning " + audioData.length + " bytes (WAV format)");
             return ResponseEntity.ok()
-                    .contentType(MediaType.APPLICATION_OCTET_STREAM)
-                    .header("Content-Disposition", "attachment; filename=speech.mp3")
+                    .contentType(MediaType.valueOf("audio/wav"))
+                    .header("Content-Disposition", "attachment; filename=speech.wav")
                     .body(audioData);
         } catch (Exception e) {
-            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(null);
+            System.err.println("❌ TTS Error in /speak endpoint: " + e.getMessage());
+            e.printStackTrace();
+            Map<String, String> error = new HashMap<>();
+            error.put("error", e.getMessage());
+            error.put("type", e.getClass().getSimpleName());
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(error);
         }
     }
     

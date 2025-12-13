@@ -34,7 +34,18 @@ public class SecurityConfig {
           .csrf(csrf->csrf.disable())
           .authorizeHttpRequests(a->a
             .requestMatchers("/api/auth/**","/oauth2/**","/api/deepgram/**").permitAll()
+            .requestMatchers("/api/deepgram/speak").permitAll() // Explicit permit for TTS endpoint
             .anyRequest().authenticated()
+          )
+          .exceptionHandling(e -> e
+            .authenticationEntryPoint((request, response, authException) -> {
+              // Don't redirect /api/deepgram/** to OAuth login
+              if (request.getRequestURI().startsWith("/api/deepgram/")) {
+                response.sendError(401, "Unauthorized");
+              } else {
+                response.sendRedirect("/api/auth/oauth2/authorization/google");
+              }
+            })
           )
           .oauth2Login(o->{
             // create a logging resolver that logs the redirect URL that will be

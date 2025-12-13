@@ -1,5 +1,6 @@
 // src/utils/deepgramSTTService.ts
 // Deepgram Speech-to-Text Service with real-time streaming
+// Enhanced with better state management
 
 export interface DeepgramSTTConfig {
   language?: string;
@@ -31,6 +32,7 @@ class DeepgramSTTService {
   private keepAliveInterval: ReturnType<typeof setInterval> | null = null;
   private mediaStream: MediaStream | null = null;
   private audioProcessor: ScriptProcessorNode | null = null;
+  private isInitializing: boolean = false;
 
   /**
    * Initialize with API key from backend.
@@ -60,11 +62,13 @@ class DeepgramSTTService {
    * Start listening for voice input with real-time streaming
    */
   async startListening(config: DeepgramSTTConfig): Promise<void> {
-    if (this.isActive) {
-      console.warn("⚠️ Deepgram STT already listening");
+    // Prevent duplicate listeners
+    if (this.isActive || this.isInitializing) {
+      console.warn("⚠️ Deepgram STT already listening or initializing");
       return;
     }
 
+    this.isInitializing = true;
     this.config = config;
     this.isActive = true;
     this.isPaused = false;
@@ -98,10 +102,12 @@ class DeepgramSTTService {
       this.setupAudioRecording(this.mediaStream);
 
       this.isListening = true;
+      this.isInitializing = false;
       this.config?.onListeningStart?.();
       console.log("🎤 Deepgram STT listening started successfully");
     } catch (error) {
       console.error("❌ Error starting Deepgram STT:", error);
+      this.isInitializing = false;
       this.cleanup();
       
       let errorMsg = error instanceof Error ? error.message : String(error);
@@ -284,6 +290,7 @@ class DeepgramSTTService {
     this.isActive = false;
     this.isListening = false;
     this.isPaused = false;
+    this.isInitializing = false;
 
     this.stopKeepAlive();
 
@@ -320,7 +327,7 @@ class DeepgramSTTService {
   }
 
   /**
-   * Pause listening
+   * Pause listening (e.g., during TTS playback)
    */
   pauseListening(): void {
     if (!this.isActive || !this.isListening) return;
@@ -329,7 +336,7 @@ class DeepgramSTTService {
   }
 
   /**
-   * Resume listening
+   * Resume listening (after TTS finishes)
    */
   resumeListening(): void {
     if (!this.isActive) return;

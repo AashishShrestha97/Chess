@@ -32,17 +32,25 @@ const AuthProvider: React.FC<React.PropsWithChildren> = ({ children }) => {
   useEffect(() => {
     (async () => {
       try {
+        console.log("🔐 AuthProvider - Attempting meApi()");
         const { data } = await meApi();
+        console.log("✅ AuthProvider - meApi() success:", data);
         setUser(data);
-      } catch {
+      } catch (error) {
+        console.warn("⚠️ AuthProvider - meApi() failed:", error);
         try {
+          console.log("🔄 AuthProvider - Attempting refreshApi()");
           await refreshApi();
+          console.log("✅ AuthProvider - refreshApi() success");
           const { data } = await meApi();
+          console.log("✅ AuthProvider - meApi() after refresh success:", data);
           setUser(data);
-        } catch {
+        } catch (refreshError) {
+          console.error("❌ AuthProvider - refreshApi() failed:", refreshError);
           setUser(null);
         }
       } finally {
+        console.log("🏁 AuthProvider - Setting loading to false");
         setLoading(false);
       }
     })();
