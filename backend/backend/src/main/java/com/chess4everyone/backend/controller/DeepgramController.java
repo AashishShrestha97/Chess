@@ -5,7 +5,6 @@ import java.util.Map;
 
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
-import org.springframework.web.bind.annotation.CrossOrigin;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -14,9 +13,12 @@ import org.springframework.web.bind.annotation.RestController;
 
 import com.chess4everyone.backend.service.DeepgramService;
 
+import jakarta.servlet.http.Cookie;
+import jakarta.servlet.http.HttpServletRequest;
+
 @RestController
 @RequestMapping("/api/deepgram")
-@CrossOrigin(origins = "*")
+// ✅ REMOVED @CrossOrigin - using global CORS config instead
 public class DeepgramController {
 
     private final DeepgramService deepgramService;
@@ -29,8 +31,10 @@ public class DeepgramController {
      * ✅ ESSENTIAL: Get API token for frontend WebSocket STT
      */
     @GetMapping("/token")
-    public ResponseEntity<?> getToken() {
+    public ResponseEntity<?> getToken(HttpServletRequest httpRequest) {
         try {
+            logCookies(httpRequest);
+            
             String apiKey = deepgramService.getApiKey();
             System.out.println("✅ API token requested and provided");
             return ResponseEntity.ok(Map.of("token", apiKey));
@@ -45,13 +49,16 @@ public class DeepgramController {
      * ✅ ESSENTIAL: Text-to-Speech (WAV format at 16kHz for optimized file size)
      */
     @PostMapping(value = "/speak", produces = "audio/wav")
-    public ResponseEntity<?> speak(@RequestBody Map<String, String> request) {
+    public ResponseEntity<?> speak(@RequestBody Map<String, String> request, HttpServletRequest httpRequest) {
         try {
+            logCookies(httpRequest);
+            
             String text = request.get("text");
             String voice = request.getOrDefault("voice", "aura-asteria-en");
             
             System.out.println("🔊 TTS endpoint called - Text: " + 
                              (text != null ? text.substring(0, Math.min(50, text.length())) : "null"));
+            System.out.println("🎤 Voice requested: " + voice);
             
             if (text == null || text.trim().isEmpty()) {
                 System.err.println("❌ TTS error: Text is required");
@@ -64,7 +71,7 @@ public class DeepgramController {
             System.out.println("✅ TTS response sent - Size: " + audioData.length + " bytes");
             
             return ResponseEntity.ok()
-                    .contentType(MediaType.valueOf("audio/wav"))  // ✅ WAV format
+                    .contentType(MediaType.valueOf("audio/wav"))
                     .header("Cache-Control", "public, max-age=3600")
                     .body(audioData);
                     
@@ -85,7 +92,9 @@ public class DeepgramController {
      * ✅ NICE-TO-HAVE: List available voices
      */
     @GetMapping("/voices")
-    public ResponseEntity<?> getVoices() {
+    public ResponseEntity<?> getVoices(HttpServletRequest httpRequest) {
+        logCookies(httpRequest);
+        
         return ResponseEntity.ok(Map.of("voices", new String[]{
                 "aura-asteria-en",   // Default - American female
                 "aura-luna-en",      // Warm female
@@ -118,6 +127,21 @@ public class DeepgramController {
                             "service", "deepgram",
                             "error", e.getMessage()
                     ));
+        }
+    }
+    
+    /**
+     * Helper method to log cookies for debugging
+     */
+    private void logCookies(HttpServletRequest httpRequest) {
+        if (httpRequest.getCookies() != null) {
+            System.out.println("🍪 Cookies present: " + httpRequest.getCookies().length);
+            for (Cookie cookie : httpRequest.getCookies()) {
+                System.out.println("  - " + cookie.getName() + " = " + 
+                    (cookie.getName().startsWith("ch4e_") ? "[TOKEN]" : cookie.getValue()));
+            }
+        } else {
+            System.out.println("⚠️ No cookies in request");
         }
     }
 }

@@ -1,4 +1,3 @@
-// entity/User.java
 package com.chess4everyone.backend.entity;
 
 import java.time.Instant;
@@ -21,19 +20,34 @@ import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
 
-@Entity @Getter @Setter @NoArgsConstructor
+@Entity 
+@Getter 
+@Setter 
+@NoArgsConstructor
 @Table(name="users")
 public class User {
-    @Id @GeneratedValue(strategy = GenerationType.IDENTITY)
+    @Id 
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    @Column(nullable=false) private String name;
-    @Column(unique = true)   private String email;
-    @Column(unique = true)   private String phone;
+    @Column(nullable=false) 
+    private String name;
+    
+    @Column(unique = true)   
+    private String email;
+    
+    @Column(unique = true)   
+    private String phone;
+    
     private String password;
-    private String provider;   // LOCAL / GOOGLE
+    
+    @Column(nullable=false)
+    private String provider = "LOCAL";   // LOCAL / GOOGLE
+    
     private String providerId;
-    private boolean enabled = true;
+    
+    @Column(nullable=false)
+    private boolean enabled = false;  // ✅ CHANGED: Default to false for email verification
 
     @CreationTimestamp
     private Instant createdAt;

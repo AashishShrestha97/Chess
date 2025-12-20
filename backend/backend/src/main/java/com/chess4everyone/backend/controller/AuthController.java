@@ -1,4 +1,3 @@
-// controller/AuthController.java
 package com.chess4everyone.backend.controller;
 
 import java.time.Instant;
@@ -13,7 +12,6 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 import com.chess4everyone.backend.config.JwtProperties;
-import com.chess4everyone.backend.dto.AuthResponse;
 import com.chess4everyone.backend.dto.LoginRequest;
 import com.chess4everyone.backend.dto.RegisterRequest;
 import com.chess4everyone.backend.dto.UserResponse;
@@ -41,72 +39,295 @@ public class AuthController {
     private final CookieUtils cookieUtils;
     private final BCryptPasswordEncoder encoder;
 
-    public AuthController(UserRepository userRepo, UserService userService,
-                          JwtService jwtService,
-                          RefreshTokenService refreshService, JwtProperties props,
-                          CookieUtils cookieUtils, BCryptPasswordEncoder encoder) {
-        this.userRepo = userRepo; this.userService = userService;
-        this.jwtService = jwtService; this.refreshService = refreshService; this.props = props;
-        this.cookieUtils = cookieUtils; this.encoder = encoder;
+    public AuthController(UserRepository userRepo, 
+                         UserService userService,
+                         JwtService jwtService,
+                         RefreshTokenService refreshService, 
+                         JwtProperties props,
+                         CookieUtils cookieUtils, 
+                         BCryptPasswordEncoder encoder) {
+        this.userRepo = userRepo;
+        this.userService = userService;
+        this.jwtService = jwtService;
+        this.refreshService = refreshService;
+        this.props = props;
+        this.cookieUtils = cookieUtils;
+        this.encoder = encoder;
     }
 
     @PostMapping("/register")
-    public ResponseEntity<?> register(@Valid @RequestBody RegisterRequest req){
-        userService.register(req);
-        return ResponseEntity.ok(new AuthResponse("Registered"));
+    public ResponseEntity<?> register(@Valid @RequestBody RegisterRequest req) {
+        try {
+            System.out.println("📝 Register request received for: " + req.email());
+            userService.register(req);
+            System.out.println("✅ Registration successful for: " + req.email());
+            return ResponseEntity.ok(Map.of(
+                "success", true,
+                "message", "Registration successful! You can now log in."
+            ));
+        } catch (IllegalArgumentException e) {
+            System.out.println("❌ Registration failed: " + e.getMessage());
+            return ResponseEntity.badRequest().body(Map.of(
+                "success", false,
+                "message", e.getMessage()
+            ));
+        } catch (Exception e) {
+            System.out.println("❌ Unexpected error during registration: " + e.getMessage());
+            e.printStackTrace();
+            return ResponseEntity.status(500).body(Map.of(
+                "success", false,
+                "message", "Registration failed. Please try again."
+            ));
+        }
     }
 
     @PostMapping("/login")
-    public ResponseEntity<?> login(@Valid @RequestBody LoginRequest req, HttpServletResponse res){
-        User u = userRepo.findByEmail(req.email()).orElseThrow(() -> new RuntimeException("Invalid credentials"));
-        if (!encoder.matches(req.password(), u.getPassword())) throw new RuntimeException("Invalid credentials");
+    public ResponseEntity<?> login(@Valid @RequestBody LoginRequest req, HttpServletResponse res) {
+        try {
+            System.out.println("🔐 Login attempt for email: " + req.email());
+            
+            // Find user by email
+            User u = userRepo.findByEmail(req.email())
+                .orElseThrow(() -> {
+                    System.out.println("❌ User not found: " + req.email());
+                    return new RuntimeException("Invalid email or password");
+                });
+            
+            System.out.println("👤 User found: " + u.getEmail() + ", Provider: " + u.getProvider());
+            
+            // Check if user is enabled
+            if (!u.isEnabled()) {
+                System.out.println("❌ User not enabled: " + req.email());
+                return ResponseEntity.status(403).body(Map.of(
+                    "success", false,
+                    "message", "Email not verified. Please check your inbox."
+                ));
+            }
+            
+            // Verify password
+            if (!encoder.matches(req.password(), u.getPassword())) {
+                System.out.println("❌ Invalid password for: " + req.email());
+                throw new RuntimeException("Invalid email or password");
+            }
+            
+            System.out.println("✅ Password verified for: " + req.email());
 
-        String access = jwtService.generateAccessToken(u.getId().toString(), Map.of("email", u.getEmail(), "name", u.getName()));
-        String refresh = jwtService.generateRefreshToken(u.getId().toString());
+            // Generate tokens
+            String access = jwtService.generateAccessToken(
+                u.getId().toString(), 
+                Map.of("email", u.getEmail(), "name", u.getName())
+            );
+            String refresh = jwtService.generateRefreshToken(u.getId().toString());
 
-        // Persist refresh token (optional if you want to invalidate later)
-        refreshService.save(refresh, u, Instant.now().plusSeconds(props.getRefreshTokenDays()*24L*60*60));
+            System.out.println("🎫 Tokens generated for: " + req.email());
 
-        cookieUtils.addHttpOnlyCookie(res,"ch4e_access", access, props.isCookieSecure(), props.getCookieDomain(), props.getAccessTokenMin()*60L, "/");
-        cookieUtils.addHttpOnlyCookie(res,"ch4e_refresh", refresh, props.isCookieSecure(), props.getCookieDomain(), props.getRefreshTokenDays()*24L*60*60, "/");
+            // Persist refresh token
+            refreshService.save(
+                refresh, 
+                u, 
+                Instant.now().plusSeconds(props.getRefreshTokenDays() * 24L * 60 * 60)
+            );
 
-        return ResponseEntity.ok(new AuthResponse("Logged in"));
+            // Set cookies
+            cookieUtils.addHttpOnlyCookie(
+                res, 
+                "ch4e_access", 
+                access, 
+                props.isCookieSecure(), 
+                props.getCookieDomain(), 
+                props.getAccessTokenMin() * 60L, 
+                "/"
+            );
+            cookieUtils.addHttpOnlyCookie(
+                res, 
+                "ch4e_refresh", 
+                refresh, 
+                props.isCookieSecure(), 
+                props.getCookieDomain(), 
+                props.getRefreshTokenDays() * 24L * 60 * 60, 
+                "/"
+            );
+
+            System.out.println("✅ Login successful for: " + req.email());
+
+            return ResponseEntity.ok(Map.of(
+                "success", true,
+                "message", "Login successful",
+                "user", Map.of(
+                    "id", u.getId(),
+                    "name", u.getName(),
+                    "email", u.getEmail()
+                )
+            ));
+            
+        } catch (RuntimeException e) {
+            System.out.println("❌ Login failed: " + e.getMessage());
+            return ResponseEntity.status(401).body(Map.of(
+                "success", false,
+                "message", e.getMessage()
+            ));
+        } catch (Exception e) {
+            System.out.println("❌ Unexpected error during login: " + e.getMessage());
+            e.printStackTrace();
+            return ResponseEntity.status(500).body(Map.of(
+                "success", false,
+                "message", "Login failed. Please try again."
+            ));
+        }
     }
 
     @PostMapping("/refresh")
-    public ResponseEntity<?> refreshToken(HttpServletRequest req, HttpServletResponse res){
-        String refresh = null;
-        if (req.getCookies()!=null) for (Cookie c: req.getCookies()) if ("ch4e_refresh".equals(c.getName())) refresh=c.getValue();
-        if (refresh==null) return ResponseEntity.status(401).body(new AuthResponse("No refresh"));
+    public ResponseEntity<?> refreshToken(HttpServletRequest req, HttpServletResponse res) {
+        try {
+            System.out.println("🔄 Refresh token request received");
+            
+            String refresh = null;
+            if (req.getCookies() != null) {
+                for (Cookie c : req.getCookies()) {
+                    if ("ch4e_refresh".equals(c.getName())) {
+                        refresh = c.getValue();
+                        break;
+                    }
+                }
+            }
+            
+            if (refresh == null) {
+                System.out.println("❌ No refresh token found in cookies");
+                return ResponseEntity.status(401).body(Map.of(
+                    "success", false,
+                    "message", "No refresh token"
+                ));
+            }
 
-        var record = refreshService.find(refresh).orElseThrow(() -> new RuntimeException("Invalid refresh"));
-        if (record.getExpiry().isBefore(Instant.now())) return ResponseEntity.status(401).body(new AuthResponse("Expired refresh"));
+            var record = refreshService.find(refresh)
+                .orElseThrow(() -> {
+                    System.out.println("❌ Invalid refresh token");
+                    return new RuntimeException("Invalid refresh token");
+                });
+            
+            if (record.getExpiry().isBefore(Instant.now())) {
+                System.out.println("❌ Refresh token expired");
+                return ResponseEntity.status(401).body(Map.of(
+                    "success", false,
+                    "message", "Refresh token expired"
+                ));
+            }
 
-        User u = record.getUser();
-        String newAccess = jwtService.generateAccessToken(u.getId().toString(), Map.of("email", u.getEmail(), "name", u.getName()));
-        cookieUtils.addHttpOnlyCookie(res,"ch4e_access", newAccess, props.isCookieSecure(), props.getCookieDomain(), props.getAccessTokenMin()*60L, "/");
-        return ResponseEntity.ok(new AuthResponse("Refreshed"));
+            User u = record.getUser();
+            String newAccess = jwtService.generateAccessToken(
+                u.getId().toString(), 
+                Map.of("email", u.getEmail(), "name", u.getName())
+            );
+            
+            cookieUtils.addHttpOnlyCookie(
+                res, 
+                "ch4e_access", 
+                newAccess, 
+                props.isCookieSecure(), 
+                props.getCookieDomain(), 
+                props.getAccessTokenMin() * 60L, 
+                "/"
+            );
+            
+            System.out.println("✅ Token refreshed for user: " + u.getEmail());
+            
+            return ResponseEntity.ok(Map.of(
+                "success", true,
+                "message", "Token refreshed"
+            ));
+            
+        } catch (Exception e) {
+            System.out.println("❌ Refresh failed: " + e.getMessage());
+            return ResponseEntity.status(401).body(Map.of(
+                "success", false,
+                "message", "Session expired. Please log in again."
+            ));
+        }
     }
 
     @PostMapping("/logout")
-    public ResponseEntity<?> logout(HttpServletRequest req, HttpServletResponse res){
-        String refresh = null;
-        if (req.getCookies()!=null) for (Cookie c: req.getCookies()) if ("ch4e_refresh".equals(c.getName())) refresh=c.getValue();
-        if (refresh!=null) refreshService.delete(refresh);
-        cookieUtils.deleteCookie(res,"ch4e_access", props.getCookieDomain(), "/");
-        cookieUtils.deleteCookie(res,"ch4e_refresh", props.getCookieDomain(), "/");
-        return ResponseEntity.ok(new AuthResponse("Logged out"));
+    public ResponseEntity<?> logout(HttpServletRequest req, HttpServletResponse res) {
+        try {
+            System.out.println("🚪 Logout request received");
+            
+            String refresh = null;
+            if (req.getCookies() != null) {
+                for (Cookie c : req.getCookies()) {
+                    if ("ch4e_refresh".equals(c.getName())) {
+                        refresh = c.getValue();
+                        break;
+                    }
+                }
+            }
+            
+            if (refresh != null) {
+                refreshService.delete(refresh);
+            }
+            
+            cookieUtils.deleteCookie(res, "ch4e_access", props.getCookieDomain(), "/");
+            cookieUtils.deleteCookie(res, "ch4e_refresh", props.getCookieDomain(), "/");
+            
+            System.out.println("✅ Logout successful");
+            
+            return ResponseEntity.ok(Map.of(
+                "success", true,
+                "message", "Logged out successfully"
+            ));
+        } catch (Exception e) {
+            System.out.println("❌ Logout error: " + e.getMessage());
+            return ResponseEntity.status(500).body(Map.of(
+                "success", false,
+                "message", "Logout failed"
+            ));
+        }
     }
 
     @GetMapping("/me")
-    public ResponseEntity<?> me(HttpServletRequest req){
-        // user id stored as subject
-        String subject = null;
-        if (req.getCookies()!=null) for (Cookie c: req.getCookies()) if ("ch4e_access".equals(c.getName())) {
-            try { subject = jwtService.parseToken(c.getValue()).getBody().getSubject(); } catch(Exception ignored){}
+    public ResponseEntity<?> me(HttpServletRequest req) {
+        try {
+            System.out.println("👤 /me endpoint called");
+            
+            String subject = null;
+            if (req.getCookies() != null) {
+                for (Cookie c : req.getCookies()) {
+                    if ("ch4e_access".equals(c.getName())) {
+                        try {
+                            subject = jwtService.parseToken(c.getValue()).getBody().getSubject();
+                            System.out.println("✅ Token parsed, user ID: " + subject);
+                        } catch (Exception e) {
+                            System.out.println("❌ Token parsing failed: " + e.getMessage());
+                        }
+                    }
+                }
+            }
+            
+            if (subject == null) {
+                System.out.println("❌ No valid token found");
+                return ResponseEntity.status(401).body(Map.of(
+                    "error", "Unauthorized",
+                    "message", "Please log in"
+                ));
+            }
+            
+            User u = userRepo.findById(Long.valueOf(subject))
+                .orElseThrow(() -> new RuntimeException("User not found"));
+            
+            System.out.println("✅ User found: " + u.getEmail());
+            
+            return ResponseEntity.ok(new UserResponse(
+                u.getId(), 
+                u.getName(), 
+                u.getEmail(), 
+                u.getPhone(), 
+                u.getProvider()
+            ));
+            
+        } catch (Exception e) {
+            System.out.println("❌ /me error: " + e.getMessage());
+            return ResponseEntity.status(401).body(Map.of(
+                "error", "Unauthorized",
+                "message", "Session invalid"
+            ));
         }
-        if (subject==null) return ResponseEntity.status(401).build();
-        User u = userRepo.findById(Long.valueOf(subject)).orElseThrow();
-        return ResponseEntity.ok(new UserResponse(u.getId(), u.getName(), u.getEmail(), u.getPhone(), u.getProvider()));
     }
 }

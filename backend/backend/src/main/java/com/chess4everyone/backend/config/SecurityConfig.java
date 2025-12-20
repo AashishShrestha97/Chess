@@ -2,69 +2,78 @@ package com.chess4everyone.backend.config;
 
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
-import org.springframework.security.authentication.AuthenticationManager;
-import org.springframework.security.config.annotation.authentication.configuration.AuthenticationConfiguration;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
+import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
+import org.springframework.security.config.http.SessionCreationPolicy;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
-import org.springframework.security.oauth2.client.registration.ClientRegistrationRepository;
-import org.springframework.security.oauth2.client.web.OAuth2AuthorizationRequestResolver;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
+import org.springframework.web.cors.CorsConfigurationSource;
 
 import com.chess4everyone.backend.security.CustomOAuth2UserService;
 import com.chess4everyone.backend.security.JwtAuthenticationFilter;
 import com.chess4everyone.backend.security.OAuth2SuccessHandler;
 
 @Configuration
+@EnableWebSecurity
 public class SecurityConfig {
-    private final JwtAuthenticationFilter jwtFilter;
-    private final CustomOAuth2UserService oAuth2UserService;
-    private final OAuth2SuccessHandler successHandler;
 
-    public SecurityConfig(JwtAuthenticationFilter jwtFilter, CustomOAuth2UserService oAuth2UserService, OAuth2SuccessHandler successHandler) {
-        this.jwtFilter = jwtFilter; this.oAuth2UserService = oAuth2UserService; this.successHandler = successHandler;
+    private final JwtAuthenticationFilter jwtAuthFilter;
+    private final CustomOAuth2UserService oauth2UserService;
+    private final OAuth2SuccessHandler oauth2SuccessHandler;
+    private final CorsConfigurationSource corsConfigurationSource;
+
+    public SecurityConfig(
+            JwtAuthenticationFilter jwtAuthFilter,
+            CustomOAuth2UserService oauth2UserService,
+            OAuth2SuccessHandler oauth2SuccessHandler,
+            CorsConfigurationSource corsConfigurationSource) {
+        this.jwtAuthFilter = jwtAuthFilter;
+        this.oauth2UserService = oauth2UserService;
+        this.oauth2SuccessHandler = oauth2SuccessHandler;
+        this.corsConfigurationSource = corsConfigurationSource;
     }
 
-    @Bean public BCryptPasswordEncoder passwordEncoder(){ return new BCryptPasswordEncoder(); }
-
     @Bean
-  public SecurityFilterChain filterChain(HttpSecurity http, ClientRegistrationRepository clientRegistrationRepository) throws Exception {
+    public SecurityFilterChain filterChain(HttpSecurity http) throws Exception {
         http
-          .cors(c->{})
-          .csrf(csrf->csrf.disable())
-          .authorizeHttpRequests(a->a
-            .requestMatchers("/api/auth/**","/oauth2/**","/api/deepgram/**").permitAll()
-            .requestMatchers("/api/deepgram/speak").permitAll() // Explicit permit for TTS endpoint
-            .anyRequest().authenticated()
-          )
-          .exceptionHandling(e -> e
-            .authenticationEntryPoint((request, response, authException) -> {
-              // Don't redirect /api/deepgram/** to OAuth login
-              if (request.getRequestURI().startsWith("/api/deepgram/")) {
-                response.sendError(401, "Unauthorized");
-              } else {
-                response.sendRedirect("/api/auth/oauth2/authorization/google");
-              }
-            })
-          )
-          .oauth2Login(o->{
-            // create a logging resolver that logs the redirect URL that will be
-            // sent to Google for easier debugging of redirect_uri mismatches
-            OAuth2AuthorizationRequestResolver loggingResolver = new com.chess4everyone.backend.security.LoggingOAuth2AuthorizationRequestResolver(clientRegistrationRepository, "/oauth2/authorization");
-            o.loginPage("/api/auth/oauth2/authorization/google")
-               // Use the Spring default callback path (/login/oauth2/code/{registrationId})
-               // because that's what the Google Console redirect URI is configured as.
-               .redirectionEndpoint(r -> r.baseUri("/login/oauth2/code/*"))
-             .authorizationEndpoint(a -> a.authorizationRequestResolver(loggingResolver))
-             .userInfoEndpoint(u->u.userService(oAuth2UserService))
-             .successHandler(successHandler);
-          })
-          .addFilterBefore(jwtFilter, UsernamePasswordAuthenticationFilter.class);
+            // ✅ CRITICAL: Enable CORS with our configuration
+            .cors(cors -> cors.configurationSource(corsConfigurationSource))
+            
+            // Disable CSRF for API (using JWT instead)
+            .csrf(csrf -> csrf.disable())
+            
+            // Stateless session (using JWT)
+            .sessionManagement(session -> 
+                session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
+            
+            // Authorization rules
+            .authorizeHttpRequests(auth -> auth
+                .requestMatchers(
+                    "/api/auth/register",
+                    "/api/auth/login",
+                    "/api/auth/refresh",
+                    "/oauth2/**",
+                    "/login/oauth2/**"
+                ).permitAll()
+                .anyRequest().authenticated()
+            )
+            
+            // OAuth2 login
+            .oauth2Login(oauth2 -> oauth2
+                .userInfoEndpoint(userInfo -> 
+                    userInfo.userService(oauth2UserService))
+                .successHandler(oauth2SuccessHandler)
+            )
+            
+            // Add JWT filter
+            .addFilterBefore(jwtAuthFilter, UsernamePasswordAuthenticationFilter.class);
+
         return http.build();
     }
 
     @Bean
-    public AuthenticationManager authenticationManager(AuthenticationConfiguration cfg) throws Exception {
-        return cfg.getAuthenticationManager();
+    public BCryptPasswordEncoder passwordEncoder() {
+        return new BCryptPasswordEncoder();
     }
 }

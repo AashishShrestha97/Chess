@@ -15,16 +15,42 @@ const SignInForm: React.FC = () => {
   const [confirmPassword, setConfirmPassword] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [success, setSuccess] = useState(false);
 
   const onSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setSubmitting(true);
     setError(null);
+    setSuccess(false);
+    
+    console.log("📝 Registration attempt for:", email);
+    
     try {
-      await registerApi({ name, phone, email, password, confirmPassword });
-      navigate("/login");
+      const response = await registerApi({ 
+        name, 
+        phone, 
+        email, 
+        password, 
+        confirmPassword 
+      });
+      
+      console.log("✅ Registration response:", response.data);
+      
+      setSuccess(true);
+      
+      // Wait 2 seconds then redirect to login
+      setTimeout(() => {
+        navigate("/login");
+      }, 2000);
+      
     } catch (err: any) {
-      setError(err?.response?.data?.message ?? "Sign up failed");
+      console.error("❌ Registration error:", err);
+      
+      const errorMessage = err?.response?.data?.message || 
+                          err?.response?.data?.error ||
+                          "Registration failed. Please try again.";
+      
+      setError(errorMessage);
     } finally {
       setSubmitting(false);
     }
@@ -33,7 +59,7 @@ const SignInForm: React.FC = () => {
   return (
     <section className="form-side">
       <div className="form-card fade-up">
-        <h2 className="title">Sign In</h2>
+        <h2 className="title">Sign Up</h2>
         <p className="subtitle">Enter your details to create your account</p>
 
         <a className="btn-google" href={googleUrl()}>
@@ -90,7 +116,7 @@ const SignInForm: React.FC = () => {
             <FiLock />
             <input
               type="password"
-              placeholder="Enter your password"
+              placeholder="At least 8 characters, 1 uppercase, 1 number, 1 special char"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               required
@@ -102,7 +128,7 @@ const SignInForm: React.FC = () => {
             <FiLock />
             <input
               type="password"
-              placeholder="Enter your password"
+              placeholder="Re-enter your password"
               value={confirmPassword}
               onChange={(e) => setConfirmPassword(e.target.value)}
               required
@@ -110,11 +136,34 @@ const SignInForm: React.FC = () => {
           </div>
 
           {error && (
-            <div style={{ color: "#ff7a7a", marginTop: "-.3rem" }}>{error}</div>
+            <div style={{ 
+              color: "#ff7a7a", 
+              marginTop: "-.3rem",
+              padding: "12px",
+              background: "rgba(255, 122, 122, 0.1)",
+              borderRadius: "8px",
+              fontSize: "0.9rem",
+              lineHeight: "1.5"
+            }}>
+              {error}
+            </div>
+          )}
+          
+          {success && (
+            <div style={{ 
+              color: "#5ad45a", 
+              marginTop: "-.3rem",
+              padding: "12px",
+              background: "rgba(90, 212, 90, 0.1)",
+              borderRadius: "8px",
+              fontSize: "0.9rem"
+            }}>
+              ✅ Registration successful! Redirecting to login...
+            </div>
           )}
 
-          <button type="submit" className="btn-submit" disabled={submitting}>
-            {submitting ? "Creating..." : "Sign In"}
+          <button type="submit" className="btn-submit" disabled={submitting || success}>
+            {submitting ? "Creating Account..." : success ? "Success!" : "Sign Up"}
           </button>
         </form>
 

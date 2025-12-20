@@ -19,13 +19,27 @@ const LoginForm: React.FC = () => {
     e.preventDefault();
     setSubmitting(true);
     setError(null);
+    
+    console.log("🔐 Login attempt for:", email);
+    
     try {
-      await loginApi(email, password);
+      const response = await loginApi(email, password);
+      console.log("✅ Login response:", response.data);
+      
+      // Get user data
       const { data } = await meApi();
+      console.log("✅ User data:", data);
+      
       setUser(data);
       navigate("/home");
     } catch (err: any) {
-      setError(err?.response?.data?.message ?? "Invalid credentials");
+      console.error("❌ Login error:", err);
+      
+      const errorMessage = err?.response?.data?.message || 
+                          err?.response?.data?.error ||
+                          "Login failed. Please check your credentials.";
+      
+      setError(errorMessage);
     } finally {
       setSubmitting(false);
     }
@@ -78,7 +92,16 @@ const LoginForm: React.FC = () => {
           </div>
 
           {error && (
-            <div style={{ color: "#ff7a7a", marginTop: "-.5rem" }}>{error}</div>
+            <div style={{ 
+              color: "#ff7a7a", 
+              marginTop: "-.5rem",
+              padding: "12px",
+              background: "rgba(255, 122, 122, 0.1)",
+              borderRadius: "8px",
+              fontSize: "0.9rem"
+            }}>
+              {error}
+            </div>
           )}
 
           <button type="submit" className="btn-submit" disabled={submitting}>

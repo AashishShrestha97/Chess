@@ -36,17 +36,25 @@ const AuthProvider: React.FC<React.PropsWithChildren> = ({ children }) => {
         const { data } = await meApi();
         console.log("✅ AuthProvider - meApi() success:", data);
         setUser(data);
-      } catch (error) {
-        console.warn("⚠️ AuthProvider - meApi() failed:", error);
-        try {
-          console.log("🔄 AuthProvider - Attempting refreshApi()");
-          await refreshApi();
-          console.log("✅ AuthProvider - refreshApi() success");
-          const { data } = await meApi();
-          console.log("✅ AuthProvider - meApi() after refresh success:", data);
-          setUser(data);
-        } catch (refreshError) {
-          console.error("❌ AuthProvider - refreshApi() failed:", refreshError);
+      } catch (error: any) {
+        console.warn("⚠️ AuthProvider - meApi() failed, trying refresh...");
+        
+        // Only try refresh if we got a 401 (not if network error)
+        if (error?.response?.status === 401) {
+          try {
+            console.log("🔄 AuthProvider - Attempting refreshApi()");
+            await refreshApi();
+            console.log("✅ AuthProvider - refreshApi() success");
+            
+            const { data } = await meApi();
+            console.log("✅ AuthProvider - meApi() after refresh success:", data);
+            setUser(data);
+          } catch (refreshError) {
+            console.error("❌ AuthProvider - refreshApi() failed:", refreshError);
+            setUser(null);
+          }
+        } else {
+          console.error("❌ AuthProvider - Network or other error:", error);
           setUser(null);
         }
       } finally {
@@ -57,8 +65,14 @@ const AuthProvider: React.FC<React.PropsWithChildren> = ({ children }) => {
   }, []);
 
   const logout = async () => {
-    await logoutApi();
-    setUser(null);
+    try {
+      await logoutApi();
+      setUser(null);
+    } catch (error) {
+      console.error("Logout error:", error);
+      // Still clear user on error
+      setUser(null);
+    }
   };
 
   return (
