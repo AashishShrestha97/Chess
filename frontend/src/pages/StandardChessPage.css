@@ -199,6 +199,7 @@
     flex-direction: column;
     align-items: center;
     position: relative;
+    left: 120px;
 }
 
 .chess-board-card::before {

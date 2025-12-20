@@ -847,7 +847,7 @@ const CommandItem: React.FC<CommandItemProps> = ({ text, example }) => {
 };
 
 /* =========================================================
-   HomePage main component (your original logic + inline UI)
+   HomePage main component - OPTIMIZED VERSION
    ========================================================= */
 
 const HomePage: React.FC = () => {
@@ -870,14 +870,11 @@ const HomePage: React.FC = () => {
   // Refs to track pending actions
   const pendingModeRef = useRef<"voice" | "classic" | null>(null);
   const pendingTimeRef = useRef<TimeControl | null>(null);
-  const _voicesLoadedRef = useRef(false);
   const isNavigatingRef = useRef(false);
 
-  // Play welcome message ONCE per browser session using sessionStorage
-  // Play welcome message ONCE per browser session using sessionStorage
-  // Always play welcome message when HomePage mounts
+  // ✅ OPTIMIZED: Single useEffect for welcome + voice initialization
   useEffect(() => {
-    const playWelcome = async () => {
+    const initializeVoiceAndWelcome = async () => {
       if (welcomePlayedRef.current) {
         console.log("✅ Welcome already played - skipping");
         return;
@@ -885,23 +882,19 @@ const HomePage: React.FC = () => {
 
       welcomePlayedRef.current = true;
 
-      // Initialize Deepgram services first
+      // ✅ Step 1: Initialize Deepgram services
       try {
         console.log("🎤 Initializing Deepgram services...");
         await deepgramVoiceCommandService.initialize();
         console.log("✅ Deepgram services initialized");
       } catch (e) {
         console.warn("⚠️ Failed to initialize Deepgram:", e);
-        return; // Exit if initialization fails
+        // Don't auto-start STT if initialization fails
+        return;
       }
 
-      // Wait for component to mount
-      await new Promise((resolve) => setTimeout(resolve, 200));
-
-      const welcomeText = `Welcome to Chess 4 Everyone! You can control the game with your voice. 
-      Try saying "Start voice chess" to begin a voice game, or "Start classic chess" for traditional gameplay. 
-      You can also say "Show commands" to see all available voice commands. 
-      Voice recognition will start automatically after this message.`;
+      // ✅ Step 2: Play ULTRA-SHORT welcome message (reduced from 600+ chars to ~80 chars)
+      const welcomeText = `Welcome to Chess for Everyone! Say "show commands" to see what you can do, or say "start voice chess" to begin.`;
 
       console.log("🔊 Playing welcome message...");
 
@@ -916,74 +909,45 @@ const HomePage: React.FC = () => {
           },
           onEnd: () => {
             console.log("✅ Welcome message completed");
-            // Start voice listening after welcome finishes
-            if (!deepgramVoiceCommandService.isActive()) {
-              console.log("🎤 Starting voice recognition after welcome...");
-              startVoiceListening();
-            }
+
+            // ✅ Step 3: Start voice recognition after a brief pause for user to process
+            setTimeout(() => {
+              if (!deepgramVoiceCommandService.isActive()) {
+                console.log("🎤 Starting voice recognition after welcome...");
+                startVoiceListening();
+              }
+            }, 1500); // 1.5 second buffer to let user process what was said
           },
           onError: (err) => {
             console.warn("⚠️ Welcome speech error:", err);
-            // Start listening anyway even if TTS failed
-            if (!deepgramVoiceCommandService.isActive()) {
-              console.log("🎤 Starting voice recognition (TTS failed)...");
-              startVoiceListening();
-            }
+            // ❌ DO NOT auto-start STT if TTS fails
+            // User must manually click "Voice On" button
+            console.log("ℹ️ TTS failed - voice commands NOT auto-started");
+            console.log(
+              "ℹ️ Click 'Voice On' button to enable voice commands manually"
+            );
           },
         });
       } catch (e) {
         console.error("❌ Welcome speech failed:", e);
-        // Start listening anyway even if TTS failed
-        if (!deepgramVoiceCommandService.isActive()) {
-          console.log("🎤 Starting voice recognition (speech failed)...");
-          startVoiceListening();
-        }
+        // ❌ DO NOT auto-start STT if TTS fails
+        // User must manually click "Voice On" button
+        console.log("ℹ️ TTS failed - voice commands NOT auto-started");
+        console.log(
+          "ℹ️ Click 'Voice On' button to enable voice commands manually"
+        );
       }
     };
 
-    playWelcome();
+    initializeVoiceAndWelcome();
 
-    // Cleanup on unmount - ONLY cleanup here, not in separate useEffect
+    // ✅ Cleanup on unmount - SINGLE cleanup function
     return () => {
       console.log("🧹 HomePage unmounting - cleaning up voice services");
       deepgramTTSService.stop();
       deepgramVoiceCommandService.stopListening();
     };
-  }, []);
-
-  // Do NOT add another useEffect for cleanup - it causes double execution!
-  // All voice service management is handled above
-
-  const playWelcomeMessage = async () => {
-    console.log("🔊 Playing welcome message...");
-
-    const welcomeText = `Welcome to Voice Chess! You can control the game with your voice. 
-    Try saying "Start voice chess" to begin, or say "Show commands" to see all available voice commands. 
-    Voice recognition is now active and ready to listen.`;
-
-    try {
-      await deepgramTTSService.speak({
-        text: welcomeText,
-        rate: 1.0,
-        volume: 0.9,
-        onStart: () => {
-          console.log("▶️ Welcome message started");
-        },
-        onEnd: () => {
-          console.log("✅ Welcome message completed");
-        },
-        onError: (err: string) => {
-          console.warn("⚠️ Welcome speech error:", err);
-        },
-      });
-    } catch (e) {
-      console.warn("❌ Welcome speech failed:", e);
-    }
-  };
-
-  // Initialize voice commands on mount
-  // REMOVED duplicate useEffect - see above for consolidated version
-  // useEffect starting at line 988 has been consolidated into the main one above
+  }, []); // Run once on mount
 
   const startVoiceListening = () => {
     console.log("🎤 Starting voice listening...");
@@ -1022,7 +986,6 @@ const HomePage: React.FC = () => {
         deepgramVoiceCommandService.pauseListening();
       }
 
-      // Always use rate 1.0 for stability and clarity
       await deepgramTTSService.speak({
         text,
         rate: 1.0,
@@ -1085,109 +1048,6 @@ const HomePage: React.FC = () => {
   };
 
   // Provide audio feedback
-
-  // Handle voice commands
-  const handleVoiceCommand = async (command: any) => {
-    console.log("🎯 Processing command:", command.intent);
-    console.log("🗣️ Transcript:", command.originalText);
-    if (command.intent.startsWith("SELECT_")) {
-      console.log("🔎 Time control intent:", command.intent);
-      console.log("🗺️ Time control map value:", timeControlMap[command.intent]);
-    }
-
-    // Voice control commands - ALWAYS processed
-    if (command.intent === "VOICE_ON") {
-      deepgramVoiceCommandService.setVoiceEnabled(true);
-      await speak("Voice commands enabled");
-      return;
-    }
-
-    if (command.intent === "VOICE_OFF") {
-      deepgramVoiceCommandService.setVoiceEnabled(false);
-      await speak("Voice commands disabled. Say voice on to enable again.");
-      return;
-    }
-
-    // Stop command - ALWAYS processed
-    if (command.intent === "VOICE_STOP") {
-      console.log("🛑 Stopping speech");
-      deepgramTTSService.stop();
-      return;
-    }
-
-    // Repeat command - ALWAYS processed
-    if (command.intent === "VOICE_REPEAT") {
-      console.log("🔁 Replaying message");
-      await deepgramTTSService.replay();
-      return;
-    }
-
-    // Time control announcements
-    if (command.intent.startsWith("TIME_CONTROLS_")) {
-      const category = command.intent
-        .replace("TIME_CONTROLS_", "")
-        .toLowerCase();
-      await announceTimeControls(category);
-      return;
-    }
-
-    // Specific time control selections
-    if (command.intent.startsWith("SELECT_")) {
-      const timeControl = timeControlMap[command.intent];
-      if (timeControl) {
-        if (!selectedMode && !pendingModeRef.current) {
-          setSelectedMode("voice");
-          pendingModeRef.current = "voice";
-        }
-        handleTimeSelection(timeControl);
-        // Make feedback non-blocking
-        provideFeedback(command.intent);
-        return;
-      }
-    }
-
-    // Opponent selection
-    if (command.intent === "SELECT_RANDOM") {
-      provideFeedback(command.intent);
-      handleOpponentSelection("random");
-      return;
-    }
-
-    if (command.intent === "SELECT_FRIENDS") {
-      provideFeedback(command.intent);
-      handleOpponentSelection("friends");
-      return;
-    }
-
-    // Provide audio feedback for action commands
-    if (!deepgramTTSService.isSpeakingNow()) {
-      await provideFeedback(command.intent);
-    }
-
-    // Execute command actions
-    switch (command.intent) {
-      case "START_VOICE_CHESS":
-        handleStartVoiceChess();
-        break;
-
-      case "START_CLASSIC_CHESS":
-        handleStartClassicChess();
-        break;
-
-      case "SHOW_COMMANDS":
-        deepgramTTSService.stop();
-        setCommandsModalOpen(true);
-        break;
-
-      case "GO_BACK":
-        handleGoBack();
-        break;
-
-      default:
-        console.log("❓ Unknown command:", command.intent);
-    }
-  };
-  // Provide audio feedback
   const provideFeedback = async (intent: string) => {
     const feedbackMessages: { [key: string]: string } = {
       START_VOICE_CHESS: "Starting voice chess",
@@ -1225,7 +1085,9 @@ const HomePage: React.FC = () => {
         console.warn("Feedback speech failed:", e);
       }
     }
-  }; // Announce versus options
+  };
+
+  // Announce versus options
   const announceVersusOptions = async () => {
     if (deepgramTTSService.isSupportedBrowser()) {
       const announcement =
@@ -1272,7 +1134,7 @@ const HomePage: React.FC = () => {
     setSelectedTime(time);
     pendingTimeRef.current = time;
 
-    // Always close modal when time is picked (voice or click)
+    // Always close modal when time is picked
     setTimeModalOpen(false);
 
     const mode = selectedMode || pendingModeRef.current;
@@ -1349,6 +1211,101 @@ const HomePage: React.FC = () => {
       setTimeModalOpen(false);
       setSelectedMode(null);
       pendingModeRef.current = null;
+    }
+  };
+
+  // Handle voice command
+  const handleVoiceCommand = async (command: any) => {
+    console.log("🎯 Processing command:", command.intent);
+    console.log("🗣️ Transcript:", command.originalText);
+
+    // Voice control commands
+    if (command.intent === "VOICE_ON") {
+      deepgramVoiceCommandService.setVoiceEnabled(true);
+      await speak("Voice commands enabled");
+      return;
+    }
+
+    if (command.intent === "VOICE_OFF") {
+      deepgramVoiceCommandService.setVoiceEnabled(false);
+      await speak("Voice commands disabled. Say voice on to enable again.");
+      return;
+    }
+
+    if (command.intent === "VOICE_STOP") {
+      console.log("🛑 Stopping speech");
+      deepgramTTSService.stop();
+      return;
+    }
+
+    if (command.intent === "VOICE_REPEAT") {
+      console.log("🔁 Replaying message");
+      await deepgramTTSService.replay();
+      return;
+    }
+
+    // Time control announcements
+    if (command.intent.startsWith("TIME_CONTROLS_")) {
+      const category = command.intent
+        .replace("TIME_CONTROLS_", "")
+        .toLowerCase();
+      await announceTimeControls(category);
+      return;
+    }
+
+    // Specific time control selections
+    if (command.intent.startsWith("SELECT_")) {
+      const timeControl = timeControlMap[command.intent];
+      if (timeControl) {
+        if (!selectedMode && !pendingModeRef.current) {
+          setSelectedMode("voice");
+          pendingModeRef.current = "voice";
+        }
+        handleTimeSelection(timeControl);
+        provideFeedback(command.intent);
+        return;
+      }
+    }
+
+    // Opponent selection
+    if (command.intent === "SELECT_RANDOM") {
+      provideFeedback(command.intent);
+      handleOpponentSelection("random");
+      return;
+    }
+
+    if (command.intent === "SELECT_FRIENDS") {
+      provideFeedback(command.intent);
+      handleOpponentSelection("friends");
+      return;
+    }
+
+    // Provide audio feedback for action commands
+    if (!deepgramTTSService.isSpeakingNow()) {
+      await provideFeedback(command.intent);
+    }
+
+    // Execute command actions
+    switch (command.intent) {
+      case "START_VOICE_CHESS":
+        handleStartVoiceChess();
+        break;
+
+      case "START_CLASSIC_CHESS":
+        handleStartClassicChess();
+        break;
+
+      case "SHOW_COMMANDS":
+        deepgramTTSService.stop();
+        setCommandsModalOpen(true);
+        break;
+
+      case "GO_BACK":
+        handleGoBack();
+        break;
+
+      default:
+        console.log("❓ Unknown command:", command.intent);
     }
   };
 

@@ -1,10 +1,8 @@
 package com.chess4everyone.backend.controller;
 
-import java.util.HashMap;
+import java.io.IOException;
 import java.util.Map;
 
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.CrossOrigin;
@@ -12,9 +10,7 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
-import org.springframework.web.multipart.MultipartFile;
 
 import com.chess4everyone.backend.service.DeepgramService;
 
@@ -22,94 +18,106 @@ import com.chess4everyone.backend.service.DeepgramService;
 @RequestMapping("/api/deepgram")
 @CrossOrigin(origins = "*")
 public class DeepgramController {
-    
-    @Autowired
-    private DeepgramService deepgramService;
-    
+
+    private final DeepgramService deepgramService;
+
+    public DeepgramController(DeepgramService deepgramService) {
+        this.deepgramService = deepgramService;
+    }
+
     /**
-     * Generate temporary token for frontend WebSocket connection
-     * This is more secure than exposing API key to frontend
+     * ✅ ESSENTIAL: Get API token for frontend WebSocket STT
      */
     @GetMapping("/token")
-    public ResponseEntity<Map<String, String>> getToken() {
+    public ResponseEntity<?> getToken() {
         try {
-            String token = deepgramService.generateTemporaryToken();
-            Map<String, String> response = new HashMap<>();
-            response.put("token", token);
-            response.put("expiresIn", "3600"); // 1 hour
-            return ResponseEntity.ok(response);
+            String apiKey = deepgramService.getApiKey();
+            System.out.println("✅ API token requested and provided");
+            return ResponseEntity.ok(Map.of("token", apiKey));
         } catch (Exception e) {
-            Map<String, String> error = new HashMap<>();
-            error.put("error", e.getMessage());
-            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(error);
+            System.err.println("❌ Error getting token: " + e.getMessage());
+            return ResponseEntity.status(500)
+                    .body(Map.of("error", e.getMessage()));
         }
     }
-    
+
     /**
-     * Convert speech to text (for fallback or non-streaming use)
+     * ✅ ESSENTIAL: Text-to-Speech (WAV format at 16kHz for optimized file size)
      */
-    @PostMapping("/transcribe")
-    public ResponseEntity<Map<String, Object>> transcribe(@RequestParam("audio") MultipartFile audioFile) {
-        try {
-            Map<String, Object> result = deepgramService.transcribeAudio(audioFile);
-            return ResponseEntity.ok(result);
-        } catch (Exception e) {
-            Map<String, Object> error = new HashMap<>();
-            error.put("error", e.getMessage());
-            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(error);
-        }
-    }
-    
-    /**
-     * Convert text to speech
-     */
-    @PostMapping(value = "/speak", produces = MediaType.APPLICATION_OCTET_STREAM_VALUE)
+    @PostMapping(value = "/speak", produces = "audio/wav")
     public ResponseEntity<?> speak(@RequestBody Map<String, String> request) {
         try {
             String text = request.get("text");
             String voice = request.getOrDefault("voice", "aura-asteria-en");
             
-            if (text == null || text.isEmpty()) {
-                Map<String, String> error = new HashMap<>();
-                error.put("error", "Text parameter is required and cannot be empty");
-                return ResponseEntity.badRequest().body(error);
+            System.out.println("🔊 TTS endpoint called - Text: " + 
+                             (text != null ? text.substring(0, Math.min(50, text.length())) : "null"));
+            
+            if (text == null || text.trim().isEmpty()) {
+                System.err.println("❌ TTS error: Text is required");
+                return ResponseEntity.badRequest()
+                        .body(Map.of("error", "Text is required"));
             }
             
-            System.out.println("✅ TTS /speak endpoint called with text: " + text.substring(0, Math.min(50, text.length())));
             byte[] audioData = deepgramService.textToSpeech(text, voice);
-            System.out.println("✅ TTS /speak endpoint returning " + audioData.length + " bytes (WAV format)");
+            
+            System.out.println("✅ TTS response sent - Size: " + audioData.length + " bytes");
+            
             return ResponseEntity.ok()
-                    .contentType(MediaType.valueOf("audio/wav"))
-                    .header("Content-Disposition", "attachment; filename=speech.wav")
+                    .contentType(MediaType.valueOf("audio/wav"))  // ✅ WAV format
+                    .header("Cache-Control", "public, max-age=3600")
                     .body(audioData);
-        } catch (Exception e) {
-            System.err.println("❌ TTS Error in /speak endpoint: " + e.getMessage());
+                    
+        } catch (IOException | InterruptedException e) {
+            System.err.println("❌ TTS error: " + e.getClass().getName() + " - " + e.getMessage());
             e.printStackTrace();
-            Map<String, String> error = new HashMap<>();
-            error.put("error", e.getMessage());
-            error.put("type", e.getClass().getSimpleName());
-            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(error);
+            return ResponseEntity.status(500)
+                    .body(Map.of("error", "TTS generation failed: " + e.getMessage()));
+        } catch (Exception e) {
+            System.err.println("❌ Unexpected TTS error: " + e.getClass().getName() + " - " + e.getMessage());
+            e.printStackTrace();
+            return ResponseEntity.status(500)
+                    .body(Map.of("error", "Unexpected error: " + e.getMessage()));
         }
     }
-    
+
     /**
-     * Get available voice models
+     * ✅ NICE-TO-HAVE: List available voices
      */
     @GetMapping("/voices")
-    public ResponseEntity<Map<String, Object>> getVoices() {
-        Map<String, Object> voices = new HashMap<>();
-        voices.put("voices", new String[]{
-            "aura-asteria-en",  // Female, warm and friendly
-            "aura-luna-en",     // Female, expressive
-            "aura-stella-en",   // Female, professional
-            "aura-athena-en",   // Female, clear and natural
-            "aura-hera-en",     // Female, confident
-            "aura-orion-en",    // Male, deep and authoritative
-            "aura-arcas-en",    // Male, natural
-            "aura-perseus-en",  // Male, energetic
-            "aura-angus-en",    // Male, conversational
-            "aura-orpheus-en"   // Male, storytelling
-        });
-        return ResponseEntity.ok(voices);
+    public ResponseEntity<?> getVoices() {
+        return ResponseEntity.ok(Map.of("voices", new String[]{
+                "aura-asteria-en",   // Default - American female
+                "aura-luna-en",      // Warm female
+                "aura-stella-en",    // Friendly female
+                "aura-athena-en",    // Professional female
+                "aura-hera-en",      // British female
+                "aura-orion-en",     // Deep male
+                "aura-arcas-en",     // American male
+                "aura-perseus-en",   // Confident male
+                "aura-angus-en",     // Irish male
+                "aura-orpheus-en"    // British male
+        }));
+    }
+
+    /**
+     * ✅ ESSENTIAL: Health check
+     */
+    @GetMapping("/health")
+    public ResponseEntity<?> health() {
+        try {
+            boolean healthy = deepgramService.isHealthy();
+            return ResponseEntity.ok(Map.of(
+                    "status", healthy ? "healthy" : "degraded",
+                    "service", "deepgram"
+            ));
+        } catch (Exception e) {
+            return ResponseEntity.status(503)
+                    .body(Map.of(
+                            "status", "unhealthy",
+                            "service", "deepgram",
+                            "error", e.getMessage()
+                    ));
+        }
     }
 }

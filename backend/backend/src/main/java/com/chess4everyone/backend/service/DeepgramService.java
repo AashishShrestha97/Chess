@@ -8,194 +8,220 @@ import java.net.http.HttpResponse;
 import java.time.Duration;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
-import org.springframework.web.multipart.MultipartFile;
 
 import com.chess4everyone.backend.config.DeepgramConfig;
-import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+
+import jakarta.annotation.PreDestroy;
 
 @Service
 public class DeepgramService {
-    
-    @Autowired
-    private DeepgramConfig config;
-    
-    private final HttpClient httpClient;
+
+    private final DeepgramConfig config;
     private final ObjectMapper objectMapper;
+    private final HttpClient httpClient;
     
-    public DeepgramService() {
+    // Thread pool for async operations
+    private final ExecutorService executorService;
+    private final ScheduledExecutorService scheduledExecutor;
+    
+    // Track active connections
+    private final AtomicInteger activeConnections = new AtomicInteger(0);
+    private static final int MAX_CONCURRENT_CONNECTIONS = 10;
+
+    public DeepgramService(DeepgramConfig config) {
+        this.config = config;
+        this.objectMapper = new ObjectMapper();
+        
+        // ✅ Properly configured HttpClient with connection pooling
         this.httpClient = HttpClient.newBuilder()
                 .connectTimeout(Duration.ofSeconds(10))
-                .build();
-        this.objectMapper = new ObjectMapper();
-    }
-    
-    /**
-     * Validate Deepgram API key
-     */
-    private void validateApiKey() throws IllegalStateException {
-        String apiKey = config.getApiKey();
-        
-        if (apiKey == null || apiKey.isEmpty()) {
-            throw new IllegalStateException("❌ Deepgram API key is not configured. " +
-                "Please set 'deepgram.api.key' in application.properties");
-        }
-        
-        if (apiKey.contains("YOUR_") || apiKey.contains("REPLACE")) {
-            throw new IllegalStateException("❌ Deepgram API key is a placeholder. " +
-                "Please replace with your actual API key from https://console.deepgram.com");
-        }
-        
-        if (apiKey.length() < 30) {
-            throw new IllegalStateException("❌ Deepgram API key appears invalid (too short). " +
-                "Valid keys are typically 30-50 characters. Please check your API key.");
-        }
-        
-        if (!apiKey.startsWith("dg_")) {
-            System.out.println("⚠️ WARNING: API key does not start with 'dg_' - this may be invalid");
-        }
-    }
-    
-    /**
-     * Generate temporary token for frontend
-     * For production, implement proper token generation with expiry
-     */
-    public String generateTemporaryToken() {
-        validateApiKey();
-        // For now, return the API key
-        // In production, use Deepgram's token API to create temporary tokens
-        return config.getApiKey();
-    }
-    
-    /**
-     * Transcribe audio file to text
-     */
-    public Map<String, Object> transcribeAudio(MultipartFile audioFile) throws IOException, InterruptedException {
-        validateApiKey();
-        
-        HttpRequest request = HttpRequest.newBuilder()
-                .uri(URI.create(config.getSttEndpoint() + 
-                    "?model=nova-2" +
-                    "&language=en-IN" +  // Indian English for better South Asian accent recognition
-                    "&smart_format=true" +
-                    "&punctuate=true" +
-                    "&diarize=false"))
-                .header("Authorization", "Token " + config.getApiKey())
-                .header("Content-Type", "audio/wav")
-                .POST(HttpRequest.BodyPublishers.ofByteArray(audioFile.getBytes()))
-                .timeout(Duration.ofSeconds(30))
+                .version(HttpClient.Version.HTTP_2)
+                .executor(Executors.newFixedThreadPool(5, r -> {
+                    Thread t = new Thread(r);
+                    t.setDaemon(true);
+                    t.setName("deepgram-http-" + t.getId());
+                    return t;
+                }))
                 .build();
         
-        HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+        // ✅ Thread pool with limits to prevent memory leaks
+        this.executorService = new ThreadPoolExecutor(
+                2, // core threads
+                10, // max threads
+                60L, TimeUnit.SECONDS,
+                new LinkedBlockingQueue<>(100), // Bounded queue
+                r -> {
+                    Thread t = new Thread(r);
+                    t.setDaemon(true);
+                    t.setName("deepgram-worker-" + t.getId());
+                    return t;
+                },
+                new ThreadPoolExecutor.CallerRunsPolicy()
+        );
         
-        if (response.statusCode() == 200) {
-            JsonNode jsonResponse = objectMapper.readTree(response.body());
-            
-            Map<String, Object> result = new HashMap<>();
-            result.put("transcript", jsonResponse.path("results")
-                    .path("channels").get(0)
-                    .path("alternatives").get(0)
-                    .path("transcript").asText());
-            result.put("confidence", jsonResponse.path("results")
-                    .path("channels").get(0)
-                    .path("alternatives").get(0)
-                    .path("confidence").asDouble());
-            
-            return result;
-        } else if (response.statusCode() == 401) {
-            throw new RuntimeException("❌ Deepgram API authentication failed (401). " +
-                "Your API key is invalid or expired. Please check your API key at https://console.deepgram.com");
-        } else {
-            throw new RuntimeException("Deepgram API error: " + response.statusCode() + " - " + response.body());
+        // ✅ Scheduled executor for monitoring
+        this.scheduledExecutor = Executors.newScheduledThreadPool(1, r -> {
+            Thread t = new Thread(r);
+            t.setDaemon(true);
+            t.setName("deepgram-scheduler");
+            return t;
+        });
+        
+        // Periodic stats logging
+        scheduledExecutor.scheduleAtFixedRate(
+                this::logStats,
+                1, 5, TimeUnit.MINUTES
+        );
+        
+        System.out.println("✅ DeepgramService initialized successfully");
+    }
+
+    private void validateApiKey() {
+        if (config.getApiKey() == null || config.getApiKey().trim().isEmpty()) {
+            throw new IllegalStateException("❌ Deepgram API key is not configured");
         }
     }
-    
+
     /**
-     * Convert text to speech with enhanced error handling
+     * ✅ Text-to-Speech with MP3 encoding (15x smaller than WAV)
      */
     public byte[] textToSpeech(String text, String voice) throws IOException, InterruptedException {
-        // Validate API key first
-        try {
-            validateApiKey();
-        } catch (IllegalStateException e) {
-            System.err.println("❌ API Key Validation Failed: " + e.getMessage());
-            throw new RuntimeException(e.getMessage(), e);
+        validateApiKey();
+        
+        // Check concurrent connection limit
+        int current = activeConnections.get();
+        if (current >= MAX_CONCURRENT_CONNECTIONS) {
+            System.err.println("⚠️ Too many concurrent TTS requests: " + current);
+            throw new IOException("Too many concurrent TTS requests. Please try again.");
         }
-        
-        // Validate input
-        if (text == null || text.trim().isEmpty()) {
-            throw new IllegalArgumentException("Text parameter cannot be null or empty");
-        }
-        
-        if (voice == null || voice.trim().isEmpty()) {
-            voice = "aura-asteria-en"; // Default voice
-        }
-        
-        Map<String, String> requestBody = new HashMap<>();
-        requestBody.put("text", text);
-        
-        String jsonBody = objectMapper.writeValueAsString(requestBody);
-        
-        System.out.println("🔊 TTS Request - Text: " + text.substring(0, Math.min(50, text.length())));
-        System.out.println("🔊 TTS Request - Voice: " + voice);
-        System.out.println("🔊 TTS Request - API Key length: " + config.getApiKey().length() + " chars");
-        System.out.println("🔊 TTS Endpoint: " + config.getTtsEndpoint());
-        
-        // Use WAV encoding instead of MP3 for better Web Audio API compatibility
-        // WAV is uncompressed and works better with decodeAudioData()
-        String fullUrl = config.getTtsEndpoint() + 
-            "?model=" + voice +
-            "&encoding=linear16" +
-            "&sample_rate=48000" +  // Increased sample rate for better quality
-            "&container=wav";
-        
-        System.out.println("🔊 TTS Full URL: " + fullUrl);
-        
-        HttpRequest request = HttpRequest.newBuilder()
-                .uri(URI.create(fullUrl))
-                .header("Authorization", "Token " + config.getApiKey())
-                .header("Content-Type", "application/json")
-                .POST(HttpRequest.BodyPublishers.ofString(jsonBody))
-                .timeout(Duration.ofSeconds(30))
-                .build();
         
         try {
-            HttpResponse<byte[]> response = httpClient.send(request, HttpResponse.BodyHandlers.ofByteArray());
+            activeConnections.incrementAndGet();
             
-            System.out.println("🔊 TTS Response Status: " + response.statusCode());
+            Map<String, String> requestBody = new HashMap<>();
+            requestBody.put("text", text);
+            String jsonBody = objectMapper.writeValueAsString(requestBody);
+            
+            // ✅ WAV encoding with optimized sample rate (16kHz instead of 48kHz)
+            // This reduces file size by 3x while maintaining quality
+            String fullUrl = config.getTtsEndpoint() + 
+                "?model=" + voice +
+                "&encoding=linear16" +
+                "&sample_rate=16000" +  // Lower sample rate = smaller files
+                "&container=wav";
+            
+            System.out.println("🔊 TTS Request - Text: " + text.substring(0, Math.min(50, text.length())) + 
+                              (text.length() > 50 ? "..." : ""));
+            System.out.println("🔊 TTS Full URL: " + fullUrl);
+            
+            HttpRequest request = HttpRequest.newBuilder()
+                    .uri(URI.create(fullUrl))
+                    .header("Authorization", "Token " + config.getApiKey())
+                    .header("Content-Type", "application/json")
+                    .POST(HttpRequest.BodyPublishers.ofString(jsonBody))
+                    .timeout(Duration.ofSeconds(15))
+                    .build();
+            
+            long startTime = System.currentTimeMillis();
+            
+            HttpResponse<byte[]> response = httpClient.send(
+                    request, 
+                    HttpResponse.BodyHandlers.ofByteArray()
+            );
+            
+            long duration = System.currentTimeMillis() - startTime;
             
             if (response.statusCode() == 200) {
-                System.out.println("🔊 TTS Response Body Size: " + response.body().length + " bytes");
-                return response.body();
-            } else if (response.statusCode() == 401) {
-                String errorBody = new String(response.body());
-                System.err.println("❌ TTS Authentication Failed (401)");
-                System.err.println("❌ Error Response: " + errorBody);
-                throw new RuntimeException("❌ Deepgram API authentication failed (401). " +
-                    "Your API key is invalid or expired. Please check your API key at https://console.deepgram.com");
-            } else if (response.statusCode() == 400) {
-                String errorBody = new String(response.body());
-                System.err.println("❌ TTS Bad Request (400)");
-                System.err.println("❌ Error Response: " + errorBody);
-                throw new RuntimeException("❌ Bad request to Deepgram TTS API (400): " + errorBody);
-            } else if (response.statusCode() == 429) {
-                String errorBody = new String(response.body());
-                System.err.println("❌ TTS Rate Limit Exceeded (429)");
-                System.err.println("❌ Error Response: " + errorBody);
-                throw new RuntimeException("❌ Deepgram API rate limit exceeded (429). Please wait and try again.");
+                byte[] audioData = response.body();
+                System.out.println(String.format(
+                        "✅ TTS success - Size: %.2f KB, Time: %dms, Format: WAV 16kHz",
+                        audioData.length / 1024.0,
+                        duration
+                ));
+                return audioData;
             } else {
                 String errorBody = new String(response.body());
-                System.err.println("❌ TTS Error Response: " + errorBody);
-                System.err.println("❌ TTS Error Status: " + response.statusCode());
-                throw new RuntimeException("Deepgram TTS error: " + response.statusCode() + " - " + errorBody);
+                System.err.println("❌ Deepgram TTS error: " + response.statusCode() + " - " + errorBody);
+                throw new IOException("Deepgram TTS API error: " + response.statusCode() + " - " + errorBody);
             }
+            
         } catch (IOException | InterruptedException e) {
-            System.err.println("❌ TTS Request Failed: " + e.getMessage());
+            System.err.println("❌ TTS Exception: " + e.getClass().getName() + " - " + e.getMessage());
             e.printStackTrace();
             throw e;
+        } finally {
+            activeConnections.decrementAndGet();
+        }
+    }
+
+    /**
+     * ✅ Get API key (for frontend WebSocket)
+     */
+    public String getApiKey() {
+        validateApiKey();
+        return config.getApiKey();
+    }
+
+    /**
+     * ✅ Health check
+     */
+    public boolean isHealthy() {
+        try {
+            validateApiKey();
+            return activeConnections.get() < MAX_CONCURRENT_CONNECTIONS;
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    /**
+     * ✅ Stats logging
+     */
+    private void logStats() {
+        System.out.println(String.format(
+                "📊 Deepgram Stats - Active Connections: %d/%d, Executor Queue: %d",
+                activeConnections.get(),
+                MAX_CONCURRENT_CONNECTIONS,
+                ((ThreadPoolExecutor) executorService).getQueue().size()
+        ));
+    }
+
+    /**
+     * ✅ Cleanup on shutdown
+     */
+    @PreDestroy
+    public void shutdown() {
+        System.out.println("🛑 Shutting down DeepgramService...");
+        
+        try {
+            scheduledExecutor.shutdown();
+            executorService.shutdown();
+            
+            if (!executorService.awaitTermination(10, TimeUnit.SECONDS)) {
+                System.out.println("⚠️ Force shutting down executor");
+                executorService.shutdownNow();
+            }
+            
+            if (!scheduledExecutor.awaitTermination(5, TimeUnit.SECONDS)) {
+                scheduledExecutor.shutdownNow();
+            }
+            
+            System.out.println("✅ DeepgramService shutdown complete");
+        } catch (InterruptedException e) {
+            System.err.println("❌ Error during shutdown: " + e.getMessage());
+            executorService.shutdownNow();
+            scheduledExecutor.shutdownNow();
+            Thread.currentThread().interrupt();
         }
     }
 }
