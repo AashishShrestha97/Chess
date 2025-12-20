@@ -1,10 +1,21 @@
 import React, { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthProvider";
+import axios from "axios";
 import Navbar from "../components/Navbar/Navbar";
 import "./ProfilePage.css";
 
-interface ProfileStats {
+// Create axios instance with base configuration
+const api = axios.create({
+  baseURL: "http://localhost:8080",
+  withCredentials: true,
+  headers: {
+    "Content-Type": "application/json",
+  },
+});
+
+// Profile Stats Interface
+export interface ProfileStats {
   userId: number;
   name: string;
   username: string;
@@ -22,13 +33,15 @@ interface ProfileStats {
   losses: number;
 }
 
-interface PerformanceArea {
+// Performance Area Interface
+export interface PerformanceArea {
   name: string;
   score: number;
   change: number;
 }
 
-interface RecentGame {
+// Recent Game Interface
+export interface RecentGame {
   id: number;
   opponentName: string;
   result: string;
@@ -37,126 +50,127 @@ interface RecentGame {
   timeAgo: string;
 }
 
+// API Functions
+const getProfileStats = async () => {
+  console.log("📡 API - Fetching profile stats");
+  const response = await api.get<ProfileStats>("/api/profile/stats");
+  console.log("✅ API - Profile stats received:", response.data);
+  return response;
+};
+
+const getPerformanceAreas = async () => {
+  console.log("📡 API - Fetching performance areas");
+  const response = await api.get<PerformanceArea[]>("/api/profile/performance");
+  console.log("✅ API - Performance areas received:", response.data);
+  return response;
+};
+
+const getRecentGames = async () => {
+  console.log("📡 API - Fetching recent games");
+  const response = await api.get<RecentGame[]>("/api/profile/recent-games");
+  console.log("✅ API - Recent games received:", response.data);
+  return response;
+};
+
+// Combined fetch function for convenience
+const getAllProfileData = async () => {
+  console.log("📡 API - Fetching all profile data");
+  const [statsRes, performanceRes, gamesRes] = await Promise.all([
+    getProfileStats(),
+    getPerformanceAreas(),
+    getRecentGames(),
+  ]);
+  
+  console.log("✅ API - All profile data received");
+  
+  return {
+    stats: statsRes.data,
+    performanceAreas: performanceRes.data,
+    recentGames: gamesRes.data,
+  };
+};
+
 const ProfilePage: React.FC = () => {
   const navigate = useNavigate();
   const { user, loading: authLoading, refetchUser } = useAuth();
   const [stats, setStats] = useState<ProfileStats | null>(null);
-  const [performanceAreas, setPerformanceAreas] = useState<PerformanceArea[]>(
-    []
-  );
+  const [performanceAreas, setPerformanceAreas] = useState<PerformanceArea[]>([]);
   const [recentGames, setRecentGames] = useState<RecentGame[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<
-    "overview" | "games" | "ai-analysis"
-  >("overview");
+  const [activeTab, setActiveTab] = useState<"overview" | "games" | "ai-analysis">("overview");
 
   // Wait for auth to complete, then fetch profile
   useEffect(() => {
-    console.log("👤 ProfilePage - User:", user, "Auth Loading:", authLoading);
+    console.log("👤 ProfilePage - State:", { 
+      user: user ? `User(id=${user.id})` : "null", 
+      authLoading 
+    });
     
     if (authLoading) {
-      console.log("⏳ Still loading authentication...");
+      console.log("⏳ ProfilePage - Still loading authentication...");
       return; // Wait for auth to complete
     }
 
     if (!user) {
-      console.warn("⚠️ User not authenticated - redirecting to login");
+      console.warn("⚠️ ProfilePage - User not authenticated, redirecting to login");
       setError("Please log in to view your profile");
-      setLoading(false);
       setTimeout(() => navigate("/login"), 1500);
       return;
     }
 
     // User is authenticated, fetch profile data
-    console.log("✅ User authenticated, fetching profile data");
+    console.log("✅ ProfilePage - User authenticated, fetching profile data");
     fetchProfileData();
   }, [authLoading, user, navigate]);
 
   const fetchProfileData = async () => {
+    setError(null);
+    setLoading(true);
+    
     try {
-      setError(null);
-      setLoading(true);
-      console.log("📡 Fetching profile data...");
+      console.log("📡 ProfilePage - Starting profile data fetch");
       
-      const [statsRes, performanceRes, gamesRes] = await Promise.all([
-        fetch("http://localhost:8080/api/profile/stats", {
-          credentials: "include",
-          headers: {
-            "Content-Type": "application/json",
-          },
-        }),
-        fetch("http://localhost:8080/api/profile/performance", {
-          credentials: "include",
-          headers: {
-            "Content-Type": "application/json",
-          },
-        }),
-        fetch("http://localhost:8080/api/profile/recent-games", {
-          credentials: "include",
-          headers: {
-            "Content-Type": "application/json",
-          },
-        }),
-      ]);
-
-      console.log("📊 Stats response:", statsRes.status, statsRes.statusText);
-      console.log("📊 Performance response:", performanceRes.status, performanceRes.statusText);
-      console.log("📊 Games response:", gamesRes.status, gamesRes.statusText);
-
+      const { stats, performanceAreas, recentGames } = await getAllProfileData();
+      
+      console.log("✅ ProfilePage - All data received successfully");
+      setStats(stats);
+      setPerformanceAreas(performanceAreas);
+      setRecentGames(recentGames);
+      
+    } catch (error: any) {
+      console.error("❌ ProfilePage - Error fetching profile data");
+      console.error("   Status:", error?.response?.status);
+      console.error("   Message:", error?.message);
+      
       // Handle authentication errors
-      if (statsRes.status === 401 || performanceRes.status === 401 || gamesRes.status === 401) {
-        console.error("❌ Authentication failed - trying to refresh user");
+      if (error?.response?.status === 401) {
+        console.log("🔄 ProfilePage - Got 401, attempting to refresh user");
         
-        // Try to refetch user (this will attempt refresh)
         if (refetchUser) {
-          await refetchUser();
-          // After refetch, try profile fetch again
-          setTimeout(() => fetchProfileData(), 1000);
-          return;
+          try {
+            await refetchUser();
+            console.log("✅ ProfilePage - User refreshed, retrying profile fetch");
+            // Retry will happen automatically via useEffect when user updates
+            return;
+          } catch (refreshError) {
+            console.error("❌ ProfilePage - Refresh failed, redirecting to login");
+            setError("Session expired. Please log in again.");
+            setTimeout(() => navigate("/login"), 2000);
+            return;
+          }
         }
         
         setError("Session expired. Please log in again.");
         setTimeout(() => navigate("/login"), 2000);
         return;
       }
-
-      // Check for errors
-      if (!statsRes.ok) {
-        const errorText = await statsRes.text();
-        console.error("❌ Stats fetch failed:", errorText);
-        throw new Error(`Stats fetch failed: ${statsRes.statusText}`);
-      }
       
-      if (!performanceRes.ok) {
-        const errorText = await performanceRes.text();
-        console.error("❌ Performance fetch failed:", errorText);
-        throw new Error(`Performance fetch failed: ${performanceRes.statusText}`);
-      }
+      // Handle other errors
+      setError(error?.response?.data?.message || error?.message || "Failed to load profile data");
       
-      if (!gamesRes.ok) {
-        const errorText = await gamesRes.text();
-        console.error("❌ Games fetch failed:", errorText);
-        throw new Error(`Games fetch failed: ${gamesRes.statusText}`);
-      }
-
-      // Parse responses
-      const statsData = await statsRes.json();
-      const performanceData = await performanceRes.json();
-      const gamesData = await gamesRes.json();
-
-      console.log("✅ Stats data:", statsData);
-      console.log("✅ Performance data:", performanceData);
-      console.log("✅ Games data:", gamesData);
-
-      setStats(statsData);
-      setPerformanceAreas(performanceData);
-      setRecentGames(gamesData);
-      
-    } catch (error: any) {
-      console.error("❌ Error fetching profile data:", error);
-      setError(error.message || "Failed to load profile data");
     } finally {
+      console.log("🏁 ProfilePage - Setting loading to false");
       setLoading(false);
     }
   };
@@ -178,10 +192,7 @@ const ProfilePage: React.FC = () => {
     return result.toLowerCase();
   };
 
-  const getResultBadge = (
-    result: string,
-    ratingChange: number
-  ): JSX.Element => {
+  const getResultBadge = (result: string, ratingChange: number): JSX.Element => {
     if (result === "WIN") {
       return <span className="result-badge win">Won +{ratingChange}</span>;
     } else if (result === "LOSS") {
