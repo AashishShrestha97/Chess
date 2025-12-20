@@ -36,9 +36,9 @@ public class CustomOAuth2UserService extends DefaultOAuth2UserService {
         String provider = req.getClientRegistration().getRegistrationId().toUpperCase();
         String sub = (String) attrs.get("sub");
         String email = (String) attrs.get("email");
-        String name = (String) attrs.getOrDefault("name", email);
+        String name = (String) attrs.getOrDefault("name", email != null ? email : "User");
 
-        System.out.println("🔐 OAuth2 login attempt - Provider: " + provider + ", Email: " + email);
+        System.out.println("🔐 OAuth2 login attempt - Provider: " + provider + ", Email: " + email + ", Name: " + name);
 
         User user = userRepo.findByProviderAndProviderId(provider, sub)
             .orElseGet(() -> {
@@ -48,7 +48,7 @@ public class CustomOAuth2UserService extends DefaultOAuth2UserService {
                 u.setProvider(provider);
                 u.setProviderId(sub);
                 u.setEmail(email);
-                u.setName(name);
+                u.setName(name != null ? name : "User");
                 u.setEnabled(true); // ✅ OAuth users are auto-verified
                 u.getRoles().add(roleRepo.findByName("ROLE_USER")
                     .orElseThrow(() -> new RuntimeException("Role ROLE_USER not found")));
@@ -61,7 +61,7 @@ public class CustomOAuth2UserService extends DefaultOAuth2UserService {
                 return savedUser;
             });
         
-        System.out.println("✅ OAuth2 user loaded: " + user.getEmail());
+        System.out.println("✅ OAuth2 user loaded: " + (user.getEmail() != null ? user.getEmail() : user.getName()));
         return oauthUser;
     }
     
@@ -82,6 +82,6 @@ public class CustomOAuth2UserService extends DefaultOAuth2UserService {
         profile.setLosses(0);
         
         profileRepo.save(profile);
-        System.out.println("✅ Default profile created for OAuth user: " + user.getEmail());
+        System.out.println("✅ Default profile created for OAuth user: " + (user.getEmail() != null ? user.getEmail() : user.getName()));
     }
 }

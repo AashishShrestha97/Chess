@@ -14,6 +14,7 @@ type AuthCtx = {
   loading: boolean;
   setUser: (u: User) => void;
   logout: () => Promise<void>;
+  refetchUser: () => Promise<void>;
 };
 
 const Ctx = createContext<AuthCtx>({
@@ -21,6 +22,7 @@ const Ctx = createContext<AuthCtx>({
   loading: true,
   setUser: () => {},
   logout: async () => {},
+  refetchUser: async () => {},
 });
 
 export const useAuth = () => useContext(Ctx);
@@ -29,38 +31,46 @@ const AuthProvider: React.FC<React.PropsWithChildren> = ({ children }) => {
   const [user, setUser] = useState<User>(null);
   const [loading, setLoading] = useState(true);
 
+  const fetchUser = async () => {
+    try {
+      console.log("🔐 AuthProvider - Attempting meApi()");
+      const { data } = await meApi();
+      console.log("✅ AuthProvider - meApi() success:", data);
+      setUser(data);
+      return true;
+    } catch (error: any) {
+      console.warn("⚠️ AuthProvider - meApi() failed:", error?.response?.status);
+      
+      // Only try refresh if we got a 401 (not if network error)
+      if (error?.response?.status === 401) {
+        try {
+          console.log("🔄 AuthProvider - Attempting refreshApi()");
+          await refreshApi();
+          console.log("✅ AuthProvider - refreshApi() success");
+          
+          // Try meApi again after refresh
+          const { data } = await meApi();
+          console.log("✅ AuthProvider - meApi() after refresh success:", data);
+          setUser(data);
+          return true;
+        } catch (refreshError: any) {
+          console.error("❌ AuthProvider - refreshApi() failed:", refreshError?.response?.status);
+          setUser(null);
+          return false;
+        }
+      } else {
+        console.error("❌ AuthProvider - Network or other error:", error);
+        setUser(null);
+        return false;
+      }
+    }
+  };
+
   useEffect(() => {
     (async () => {
-      try {
-        console.log("🔐 AuthProvider - Attempting meApi()");
-        const { data } = await meApi();
-        console.log("✅ AuthProvider - meApi() success:", data);
-        setUser(data);
-      } catch (error: any) {
-        console.warn("⚠️ AuthProvider - meApi() failed, trying refresh...");
-        
-        // Only try refresh if we got a 401 (not if network error)
-        if (error?.response?.status === 401) {
-          try {
-            console.log("🔄 AuthProvider - Attempting refreshApi()");
-            await refreshApi();
-            console.log("✅ AuthProvider - refreshApi() success");
-            
-            const { data } = await meApi();
-            console.log("✅ AuthProvider - meApi() after refresh success:", data);
-            setUser(data);
-          } catch (refreshError) {
-            console.error("❌ AuthProvider - refreshApi() failed:", refreshError);
-            setUser(null);
-          }
-        } else {
-          console.error("❌ AuthProvider - Network or other error:", error);
-          setUser(null);
-        }
-      } finally {
-        console.log("🏁 AuthProvider - Setting loading to false");
-        setLoading(false);
-      }
+      await fetchUser();
+      console.log("🏁 AuthProvider - Setting loading to false");
+      setLoading(false);
     })();
   }, []);
 
@@ -75,8 +85,14 @@ const AuthProvider: React.FC<React.PropsWithChildren> = ({ children }) => {
     }
   };
 
+  const refetchUser = async () => {
+    setLoading(true);
+    await fetchUser();
+    setLoading(false);
+  };
+
   return (
-    <Ctx.Provider value={{ user, setUser, loading, logout }}>
+    <Ctx.Provider value={{ user, setUser, loading, logout, refetchUser }}>
       {children}
     </Ctx.Provider>
   );

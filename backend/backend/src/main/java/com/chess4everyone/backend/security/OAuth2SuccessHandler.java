@@ -2,6 +2,7 @@ package com.chess4everyone.backend.security;
 
 import java.io.IOException;
 import java.time.Instant;
+import java.util.HashMap;
 import java.util.Map;
 
 import org.springframework.security.core.Authentication;
@@ -58,9 +59,11 @@ public class OAuth2SuccessHandler extends SimpleUrlAuthenticationSuccessHandler 
             String provider = "GOOGLE";
             String sub = (String) attrs.get("sub");
             String email = (String) attrs.get("email");
+            String name = (String) attrs.getOrDefault("name", email != null ? email : "User");
             
-            System.out.println("👤 OAuth user - Provider: " + provider + ", Email: " + email);
+            System.out.println("👤 OAuth user - Provider: " + provider + ", Email: " + email + ", Name: " + name);
             
+            // Find or create user
             User user = userRepo.findByProviderAndProviderId(provider, sub)
                 .orElseThrow(() -> new RuntimeException("User should have been created by CustomOAuth2UserService"));
             
@@ -74,10 +77,15 @@ public class OAuth2SuccessHandler extends SimpleUrlAuthenticationSuccessHandler 
                 System.out.println("✅ Profile already exists for: " + user.getEmail());
             }
             
+            // ✅ FIX: Create claims map safely
+            Map<String, Object> claims = new HashMap<>();
+            claims.put("email", user.getEmail() != null ? user.getEmail() : "");
+            claims.put("name", user.getName() != null ? user.getName() : "User");
+            
             // Generate tokens
             String accessToken = jwtService.generateAccessToken(
                 user.getId().toString(),
-                Map.of("email", user.getEmail(), "name", user.getName())
+                claims
             );
             
             String refreshToken = jwtService.generateRefreshToken(user.getId().toString());

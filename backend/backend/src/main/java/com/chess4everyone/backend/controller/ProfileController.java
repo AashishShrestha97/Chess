@@ -45,6 +45,17 @@ public class ProfileController {
     private Long getUserIdFromRequest(HttpServletRequest req) {
         System.out.println("🔍 Extracting user ID from request");
         
+        // Log all cookies
+        if (req.getCookies() != null) {
+            System.out.println("🍪 Total cookies: " + req.getCookies().length);
+            for (Cookie cookie : req.getCookies()) {
+                System.out.println("  Cookie: " + cookie.getName() + " = " + 
+                    (cookie.getName().startsWith("ch4e_") ? "[TOKEN]" : cookie.getValue()));
+            }
+        } else {
+            System.out.println("⚠️ No cookies in request");
+        }
+        
         String subject = null;
         if (req.getCookies() != null) {
             for (Cookie c : req.getCookies()) {
@@ -54,6 +65,7 @@ public class ProfileController {
                         System.out.println("✅ Token parsed, user ID: " + subject);
                     } catch (Exception e) {
                         System.out.println("❌ Token parsing failed: " + e.getMessage());
+                        e.printStackTrace();
                     }
                 }
             }
@@ -73,6 +85,7 @@ public class ProfileController {
         
         Long userId = getUserIdFromRequest(req);
         if (userId == null) {
+            System.out.println("❌ Unauthorized - no user ID");
             return ResponseEntity.status(401).body(Map.of(
                 "error", "Unauthorized",
                 "message", "Please log in to view profile"
@@ -83,7 +96,7 @@ public class ProfileController {
             User user = userRepo.findById(userId)
                 .orElseThrow(() -> new RuntimeException("User not found"));
             
-            System.out.println("👤 Found user: " + user.getEmail());
+            System.out.println("👤 Found user: " + user.getEmail() + " (ID: " + user.getId() + ")");
             
             UserProfile profile = profileRepo.findByUserId(userId)
                 .orElseGet(() -> {
@@ -99,7 +112,7 @@ public class ProfileController {
             ProfileStatsDto stats = new ProfileStatsDto(
                 user.getId(),
                 user.getName(),
-                user.getEmail().split("@")[0],
+                user.getEmail() != null ? user.getEmail().split("@")[0] : "player",
                 profile.getRating(),
                 profile.getRatingChangeThisMonth(),
                 profile.getGlobalRank(),
@@ -122,7 +135,7 @@ public class ProfileController {
             e.printStackTrace();
             return ResponseEntity.status(500).body(Map.of(
                 "error", "Internal error",
-                "message", "Failed to load profile stats"
+                "message", "Failed to load profile stats: " + e.getMessage()
             ));
         }
     }
@@ -224,6 +237,18 @@ public class ProfileController {
         profile.setWins(0);
         profile.setDraws(0);
         profile.setLosses(0);
+        profile.setOpeningScore(50);
+        profile.setMiddleGameScore(50);
+        profile.setEndgameScore(50);
+        profile.setTacticsScore(50);
+        profile.setTimeManagementScore(50);
+        profile.setBlunderAvoidanceScore(50);
+        profile.setOpeningScoreChange(0);
+        profile.setMiddleGameScoreChange(0);
+        profile.setEndgameScoreChange(0);
+        profile.setTacticsScoreChange(0);
+        profile.setTimeManagementScoreChange(0);
+        profile.setBlunderAvoidanceScoreChange(0);
         
         return profileRepo.save(profile);
     }
