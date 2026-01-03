@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthProvider";
+<<<<<<< HEAD
 import axios from "axios";
 import Navbar from "../components/Navbar/Navbar";
 import "./ProfilePage.css";
@@ -57,6 +58,34 @@ const getProfileStats = async () => {
   console.log("✅ API - Profile stats received:", response.data);
   return response;
 };
+=======
+import EditProfileModal from "../components/HomePage/EditProfileModal";
+import {
+  getProfileStats,
+  getPerformanceAreas,
+  getRecentGames,
+  getUserInfo,
+  type ProfileStats,
+  type PerformanceArea,
+  type RecentGame,
+  type UserInfo,
+} from "../api/profile";
+import "./ProfilePage.css";
+
+const ProfilePage: React.FC = () => {
+  const { user, loading: authLoading } = useAuth();
+  const [stats, setStats] = useState<ProfileStats | null>(null);
+  const [userInfo, setUserInfo] = useState<UserInfo | null>(null);
+  const [performanceAreas, setPerformanceAreas] = useState<PerformanceArea[]>(
+    []
+  );
+  const [recentGames, setRecentGames] = useState<RecentGame[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [activeTab, setActiveTab] = useState<
+    "overview" | "games" | "ai-analysis"
+  >("overview");
+  const [isEditModalOpen, setIsEditModalOpen] = useState(false);
+>>>>>>> 9e3eafa (some changes)
 
 const getPerformanceAreas = async () => {
   console.log("📡 API - Fetching performance areas");
@@ -129,6 +158,7 @@ const ProfilePage: React.FC = () => {
     setLoading(true);
     
     try {
+<<<<<<< HEAD
       console.log("📡 ProfilePage - Starting profile data fetch");
       
       const { stats, performanceAreas, recentGames } = await getAllProfileData();
@@ -169,15 +199,51 @@ const ProfilePage: React.FC = () => {
       // Handle other errors
       setError(error?.response?.data?.message || error?.message || "Failed to load profile data");
       
+=======
+      const [statsRes, performanceRes, gamesRes, userInfoRes] =
+        await Promise.all([
+          getProfileStats(),
+          getPerformanceAreas(),
+          getRecentGames(),
+          getUserInfo(),
+        ]);
+
+      console.log("📊 Profile data fetched successfully");
+      setStats(statsRes.data);
+      setUserInfo(userInfoRes.data);
+      setPerformanceAreas(performanceRes.data);
+      setRecentGames(gamesRes.data);
+    } catch (error) {
+      console.error("❌ Error fetching profile data:", error);
+>>>>>>> 9e3eafa (some changes)
     } finally {
       console.log("🏁 ProfilePage - Setting loading to false");
       setLoading(false);
     }
   };
 
+  const handleProfileUpdate = (updatedInfo: UserInfo) => {
+    setUserInfo(updatedInfo);
+    // Refresh stats to get updated name
+    if (stats) {
+      setStats({
+        ...stats,
+        name: updatedInfo.name,
+      });
+    }
+  };
+
   const getInitials = (name: string): string => {
+<<<<<<< HEAD
     if (!name) return "U";
     return name.charAt(0).toUpperCase();
+=======
+    return name
+      .split(" ")
+      .map((n) => n.charAt(0).toUpperCase())
+      .join("")
+      .slice(0, 2);
+>>>>>>> 9e3eafa (some changes)
   };
 
   const formatGlobalRank = (rank: number): string => {
@@ -250,6 +316,7 @@ const ProfilePage: React.FC = () => {
     );
   }
 
+<<<<<<< HEAD
   // Show error if profile fetch failed
   if (error) {
     return (
@@ -283,6 +350,9 @@ const ProfilePage: React.FC = () => {
 
   // Show error if stats not loaded
   if (!stats) {
+=======
+  if (!stats || !userInfo) {
+>>>>>>> 9e3eafa (some changes)
     return (
       <>
         <Navbar rating={0} streak={0} />
@@ -313,6 +383,7 @@ const ProfilePage: React.FC = () => {
   }
 
   return (
+<<<<<<< HEAD
     <>
       <Navbar rating={stats.rating} streak={stats.currentStreak} />
       
@@ -368,6 +439,54 @@ const ProfilePage: React.FC = () => {
               className={`stat-change ${
                 stats.ratingChangeThisMonth >= 0 ? "positive" : "negative"
               }`}
+=======
+    <div className="profile-container">
+      {/* Profile Header */}
+      <div className="profile-header">
+        <div className="profile-avatar">
+          <div className="avatar-circle">{getInitials(userInfo.name)}</div>
+          <button className="avatar-upload">
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
+              <path d="M8 0a8 8 0 1 0 0 16A8 8 0 0 0 8 0zm3.5 7.5h-3v3h-1v-3h-3v-1h3v-3h1v3h3v1z" />
+            </svg>
+          </button>
+        </div>
+
+        <div className="profile-info">
+          <h1 className="profile-name">{userInfo.name}</h1>
+          <p className="profile-username">@{userInfo.email.split("@")[0]}</p>
+        </div>
+
+        <div className="profile-actions">
+          <button
+            className="btn-edit"
+            onClick={() => setIsEditModalOpen(true)}
+          >
+            <svg width="18" height="18" viewBox="0 0 18 18" fill="currentColor">
+              <path d="M12.5 1.5l4 4-9 9H3.5v-4l9-9zm0 1.41L4 11.41V13h1.59l8.5-8.5L12.5 2.91z" />
+            </svg>
+            Edit Profile
+          </button>
+          <button className="btn-share">
+            <svg width="18" height="18" viewBox="0 0 18 18" fill="currentColor">
+              <path d="M13.5 12c-.8 0-1.5.3-2 .8l-5.2-3c.1-.3.2-.5.2-.8s-.1-.5-.2-.8l5.2-3c.5.5 1.2.8 2 .8 1.7 0 3-1.3 3-3s-1.3-3-3-3-3 1.3-3 3c0 .3.1.5.2.8l-5.2 3c-.5-.5-1.2-.8-2-.8-1.7 0-3 1.3-3 3s1.3 3 3 3c.8 0 1.5-.3 2-.8l5.2 3c-.1.3-.2.5-.2.8 0 1.7 1.3 3 3 3s3-1.3 3-3-1.3-3-3-3z" />
+            </svg>
+          </button>
+        </div>
+      </div>
+
+      {/* Stats Overview */}
+      <div className="stats-overview">
+        <div className="stat-card rating">
+          <div className="stat-value">
+            {stats.rating}
+            <svg
+              className="rating-icon"
+              width="20"
+              height="20"
+              viewBox="0 0 20 20"
+              fill="currentColor"
+>>>>>>> 9e3eafa (some changes)
             >
               {stats.ratingChangeThisMonth >= 0 ? "+" : ""}
               {stats.ratingChangeThisMonth} this month
@@ -766,7 +885,19 @@ const ProfilePage: React.FC = () => {
           )}
         </div>
       </div>
+<<<<<<< HEAD
     </>
+=======
+
+      {/* Edit Profile Modal */}
+      <EditProfileModal
+        isOpen={isEditModalOpen}
+        userInfo={userInfo}
+        onClose={() => setIsEditModalOpen(false)}
+        onUpdate={handleProfileUpdate}
+      />
+    </div>
+>>>>>>> 9e3eafa (some changes)
   );
 };
 

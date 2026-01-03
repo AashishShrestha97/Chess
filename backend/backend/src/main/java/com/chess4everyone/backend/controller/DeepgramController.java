@@ -31,10 +31,15 @@ public class DeepgramController {
      * ✅ ESSENTIAL: Get API token for frontend WebSocket STT
      */
     @GetMapping("/token")
+<<<<<<< HEAD
     public ResponseEntity<?> getToken(HttpServletRequest httpRequest) {
         try {
             logCookies(httpRequest);
             
+=======
+    public ResponseEntity<?> getToken() {
+        try {
+>>>>>>> 9e3eafa (some changes)
             String apiKey = deepgramService.getApiKey();
             System.out.println("✅ API token requested and provided");
             return ResponseEntity.ok(Map.of("token", apiKey));
@@ -49,7 +54,11 @@ public class DeepgramController {
      * ✅ ESSENTIAL: Text-to-Speech (WAV format at 16kHz for optimized file size)
      */
     @PostMapping(value = "/speak", produces = "audio/wav")
+<<<<<<< HEAD
     public ResponseEntity<?> speak(@RequestBody Map<String, String> request, HttpServletRequest httpRequest) {
+=======
+    public ResponseEntity<?> speak(@RequestBody Map<String, String> request) {
+>>>>>>> 9e3eafa (some changes)
         try {
             logCookies(httpRequest);
             
@@ -58,7 +67,10 @@ public class DeepgramController {
             
             System.out.println("🔊 TTS endpoint called - Text: " + 
                              (text != null ? text.substring(0, Math.min(50, text.length())) : "null"));
+<<<<<<< HEAD
             System.out.println("🎤 Voice requested: " + voice);
+=======
+>>>>>>> 9e3eafa (some changes)
             
             if (text == null || text.trim().isEmpty()) {
                 System.err.println("❌ TTS error: Text is required");
@@ -71,7 +83,11 @@ public class DeepgramController {
             System.out.println("✅ TTS response sent - Size: " + audioData.length + " bytes");
             
             return ResponseEntity.ok()
+<<<<<<< HEAD
                     .contentType(MediaType.valueOf("audio/wav"))
+=======
+                    .contentType(MediaType.valueOf("audio/wav"))  // ✅ WAV format
+>>>>>>> 9e3eafa (some changes)
                     .header("Cache-Control", "public, max-age=3600")
                     .body(audioData);
                     
@@ -85,6 +101,7 @@ public class DeepgramController {
             e.printStackTrace();
             return ResponseEntity.status(500)
                     .body(Map.of("error", "Unexpected error: " + e.getMessage()));
+<<<<<<< HEAD
         }
     }
 
@@ -127,10 +144,13 @@ public class DeepgramController {
                             "service", "deepgram",
                             "error", e.getMessage()
                     ));
+=======
+>>>>>>> 9e3eafa (some changes)
         }
     }
-    
+
     /**
+<<<<<<< HEAD
      * Helper method to log cookies for debugging
      */
     private void logCookies(HttpServletRequest httpRequest) {
@@ -142,6 +162,44 @@ public class DeepgramController {
             }
         } else {
             System.out.println("⚠️ No cookies in request");
+=======
+     * ✅ NICE-TO-HAVE: List available voices
+     */
+    @GetMapping("/voices")
+    public ResponseEntity<?> getVoices() {
+        return ResponseEntity.ok(Map.of("voices", new String[]{
+                "aura-asteria-en",   // Default - American female
+                "aura-luna-en",      // Warm female
+                "aura-stella-en",    // Friendly female
+                "aura-athena-en",    // Professional female
+                "aura-hera-en",      // British female
+                "aura-orion-en",     // Deep male
+                "aura-arcas-en",     // American male
+                "aura-perseus-en",   // Confident male
+                "aura-angus-en",     // Irish male
+                "aura-orpheus-en"    // British male
+        }));
+    }
+
+    /**
+     * ✅ ESSENTIAL: Health check
+     */
+    @GetMapping("/health")
+    public ResponseEntity<?> health() {
+        try {
+            boolean healthy = deepgramService.isHealthy();
+            return ResponseEntity.ok(Map.of(
+                    "status", healthy ? "healthy" : "degraded",
+                    "service", "deepgram"
+            ));
+        } catch (Exception e) {
+            return ResponseEntity.status(503)
+                    .body(Map.of(
+                            "status", "unhealthy",
+                            "service", "deepgram",
+                            "error", e.getMessage()
+                    ));
+>>>>>>> 9e3eafa (some changes)
         }
     }
 }

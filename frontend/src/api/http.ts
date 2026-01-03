@@ -19,7 +19,12 @@ http.interceptors.response.use(
   (res) => res,
   async (error) => {
     const original = error.config;
-    if (error?.response?.status === 401 && !original._retry) {
+    if (!original) return Promise.reject(error);
+    
+    // Only retry if not already retried and not calling auth endpoints
+    const isAuthEndpoint = original.url?.includes("/api/auth/");
+    
+    if (error?.response?.status === 401 && !original._retry && !isAuthEndpoint) {
       original._retry = true;
 
       if (!isRefreshing) {

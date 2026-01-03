@@ -6,12 +6,16 @@ import java.util.Map;
 
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PutMapping;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 import com.chess4everyone.backend.dto.PerformanceAreaDto;
 import com.chess4everyone.backend.dto.ProfileStatsDto;
 import com.chess4everyone.backend.dto.RecentGameDto;
+import com.chess4everyone.backend.dto.UpdateProfileRequest;
+import com.chess4everyone.backend.dto.UserResponse;
 import com.chess4everyone.backend.entity.Game;
 import com.chess4everyone.backend.entity.User;
 import com.chess4everyone.backend.entity.UserProfile;
@@ -218,6 +222,60 @@ public class ProfileController {
                 "message", "Failed to load games"
             ));
         }
+    }
+
+    @PutMapping("/update")
+    public ResponseEntity<?> updateProfile(HttpServletRequest req, @RequestBody UpdateProfileRequest updateRequest) {
+        Long userId = getUserIdFromRequest(req);
+        if (userId == null) {
+            return ResponseEntity.status(401).body("Unauthorized");
+        }
+
+        User user = userRepo.findById(userId).orElseThrow();
+
+        // Update name if provided
+        if (updateRequest.name() != null && !updateRequest.name().trim().isEmpty()) {
+            user.setName(updateRequest.name().trim());
+        }
+
+        // Update phone if provided
+        if (updateRequest.phone() != null && !updateRequest.phone().trim().isEmpty()) {
+            user.setPhone(updateRequest.phone().trim());
+        }
+
+        @SuppressWarnings("null")
+        User saved = userRepo.save(user);
+
+        // Return updated user info
+        UserResponse response = new UserResponse(
+            saved.getId(),
+            saved.getName(),
+            saved.getEmail(),
+            saved.getPhone(),
+            saved.getProvider()
+        );
+
+        return ResponseEntity.ok(response);
+    }
+
+    @GetMapping("/user-info")
+    public ResponseEntity<?> getUserInfo(HttpServletRequest req) {
+        Long userId = getUserIdFromRequest(req);
+        if (userId == null) {
+            return ResponseEntity.status(401).body("Unauthorized");
+        }
+
+        User user = userRepo.findById(userId).orElseThrow();
+
+        UserResponse response = new UserResponse(
+            user.getId(),
+            user.getName(),
+            user.getEmail(),
+            user.getPhone(),
+            user.getProvider()
+        );
+
+        return ResponseEntity.ok(response);
     }
 
     private UserProfile createDefaultProfile(User user) {

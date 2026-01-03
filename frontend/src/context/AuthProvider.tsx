@@ -31,6 +31,7 @@ const AuthProvider: React.FC<React.PropsWithChildren> = ({ children }) => {
   const [user, setUser] = useState<User>(null);
   const [loading, setLoading] = useState(true);
 
+<<<<<<< HEAD
   const fetchUser = async () => {
     console.log("🔐 AuthProvider - Starting fetchUser()");
     
@@ -63,6 +64,35 @@ const AuthProvider: React.FC<React.PropsWithChildren> = ({ children }) => {
           console.error("   Message:", refreshError?.message);
           setUser(null);
           return false;
+=======
+  useEffect(() => {
+    (async () => {
+      try {
+        console.log("🔐 AuthProvider - Attempting meApi()");
+        const { data } = await meApi();
+        console.log("✅ AuthProvider - meApi() success:", data);
+        setUser(data);
+      } catch (error: any) {
+        console.warn("⚠️ AuthProvider - meApi() failed:", error?.response?.status);
+        
+        // If 401, user is not authenticated - this is expected
+        if (error?.response?.status === 401) {
+          console.warn("⚠️ User not authenticated (401)");
+          setUser(null);
+        } else {
+          // For other errors, try to refresh
+          try {
+            console.log("🔄 AuthProvider - Attempting refreshApi()");
+            await refreshApi();
+            console.log("✅ AuthProvider - refreshApi() success");
+            const { data } = await meApi();
+            console.log("✅ AuthProvider - meApi() after refresh success:", data);
+            setUser(data);
+          } catch (refreshError) {
+            console.error("❌ AuthProvider - refreshApi() failed:", refreshError);
+            setUser(null);
+          }
+>>>>>>> 9e3eafa (some changes)
         }
       } else {
         console.error("❌ AuthProvider - Non-401 error, clearing user");
