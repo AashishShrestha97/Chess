@@ -7,6 +7,8 @@ import HomePage from "./pages/HomePage";
 import "chessground/assets/chessground.base.css";
 import "chessground/assets/chessground.brown.css";
 import "chessground/assets/chessground.cburnett.css";
+import GameHistoryPage from './pages/GameHistoryPage';
+import GameReviewPage from './pages/GameReviewPage';
 
 import "./App.css";
 import VoiceGamePage from "./pages/VoiceGamePage";
@@ -26,6 +28,8 @@ const App: React.FC = () => {
         <Route path="/classicchess" element={<StandardChessPage />} />
         <Route path="/settings" element={<SettingsPage />} />
         <Route path="/profile" element={<ProfilePage />} />
+        <Route path="/game-history" element={<GameHistoryPage />} />
+<Route path="/game-review/:gameId" element={<GameReviewPage />} />
       </Routes>
     </BrowserRouter>
   );

@@ -1036,8 +1036,9 @@ export class GlobalVoiceParser {
     }
 
     // ========== PATTERN 3: PIECE TO SQUARE (e.g., "knight to f3") ==========
+    // Enhanced to match piece names with spaces (e.g., "n to f3", "nite to f3", "knight f3")
     const pieceToPattern = new RegExp(
-      `\\b(${pieceNames})\\s+(?:to|at|on|too|tu|toh|goes?|move|moves)?\\s*([a-h])\\s*[-_]?\\s*([1-8]|one|two|three|four|five|six|seven|eight|ek|do|teen|char|panch|chha|saat|aat)\\b`,
+      `\\b(${pieceNames}|n|b|r|q|k|p)\\s*(?:to|at|on|too|tu|toh|goes?|move|moves)?\\s*([a-h]|ay|eh|be|see|de|ee|ef|ge|aitch|ache|eich)\\s*[-_\\s]?\\s*([1-8]|one|two|three|four|five|six|seven|eight|ek|do|teen|char|panch|chha|saat|aat)\\b`,
       'i'
     );
     
@@ -1047,6 +1048,12 @@ export class GlobalVoiceParser {
       let file = pieceToMatch[2].toLowerCase();
       let rank = pieceToMatch[3].toLowerCase();
       
+      // Resolve single letter piece names
+      const shortPieceMap: { [key: string]: string } = {
+        n: "knight", b: "bishop", r: "rook", q: "queen", k: "king", p: "pawn"
+      };
+      const resolvedPieceName = shortPieceMap[pieceName] || pieceName;
+      
       // File should be a single letter a-h, validate first
       if (!/^[a-h]$/.test(file)) {
         file = this.fileMap[file] || file;
@@ -1054,9 +1061,9 @@ export class GlobalVoiceParser {
       rank = this.rankMap[rank] || rank;
       
       const square = file + rank;
-      const piece = pieceMap[pieceName];
+      const piece = pieceMap[resolvedPieceName];
       
-      console.log(`🎯 Detected: ${pieceName} to ${square}`);
+      console.log(`🎯 Detected: ${resolvedPieceName} to ${square} (piece: ${piece})`);
       
       // Find moves matching this piece and destination
       let candidates = legalMoves.filter(m => m.to === square);
@@ -1072,14 +1079,18 @@ export class GlobalVoiceParser {
       
       if (candidates.length > 1) {
         // Multiple candidates - try to disambiguate
-        console.log(`⚠️ Multiple candidates for ${pieceName} to ${square}:`, 
+        console.log(`⚠️ Multiple candidates for ${resolvedPieceName} to ${square}:`, 
           candidates.map(m => m.san).join(", "));
         
         // Check for "from" square
-        const fromPattern = /from\s+([a-h])[-_]?([1-8])/i;
+        const fromPattern = /from\s+([a-h]|ay|eh|be|see|de|ee|ef|ge|aitch|ache|eich)[-_\s]?([1-8]|one|two|three|four|five|six|seven|eight|ek|do|teen|char|panch|chha|saat|aat)/i;
         const fromMatch = processed.match(fromPattern);
         if (fromMatch) {
-          const fromSquare = fromMatch[1] + fromMatch[2];
+          let fromFile = fromMatch[1].toLowerCase();
+          let fromRank = fromMatch[2].toLowerCase();
+          fromFile = this.fileMap[fromFile] || fromFile;
+          fromRank = this.rankMap[fromRank] || fromRank;
+          const fromSquare = fromFile + fromRank;
           const specific = candidates.find(m => m.from === fromSquare);
           if (specific) {
             console.log("✅ Disambiguated move:", specific.san);
@@ -1095,7 +1106,7 @@ export class GlobalVoiceParser {
 
     // ========== PATTERN 4: PIECE TAKES SQUARE (e.g., "knight takes e5") ==========
     const pieceTakesPattern = new RegExp(
-      `\\b(${pieceNames})\\s*(?:takes?|captures?|x|tek|teyk|catch|ketch|grabs?|eats?)\\s*([a-h])\\s*[-_]?\\s*([1-8]|one|two|three|four|five|six|seven|eight|ek|do|teen|char|panch|chha|saat|aat)\\b`,
+      `\\b(${pieceNames}|n|b|r|q|k|p)\\s*(?:takes?|captures?|x|tek|teyk|catch|ketch|grabs?|eats?)\\s*([a-h]|ay|eh|be|see|de|ee|ef|ge|aitch|ache|eich)\\s*[-_\\s]?\\s*([1-8]|one|two|three|four|five|six|seven|eight|ek|do|teen|char|panch|chha|saat|aat)\\b`,
       'i'
     );
     
@@ -1105,6 +1116,12 @@ export class GlobalVoiceParser {
       let file = pieceTakesMatch[2].toLowerCase();
       let rank = pieceTakesMatch[3].toLowerCase();
       
+      // Resolve single letter piece names
+      const shortPieceMap: { [key: string]: string } = {
+        n: "knight", b: "bishop", r: "rook", q: "queen", k: "king", p: "pawn"
+      };
+      const resolvedPieceName = shortPieceMap[pieceName] || pieceName;
+      
       // File should be a single letter a-h, validate first
       if (!/^[a-h]$/.test(file)) {
         file = this.fileMap[file] || file;
@@ -1112,9 +1129,9 @@ export class GlobalVoiceParser {
       rank = this.rankMap[rank] || rank;
       
       const square = file + rank;
-      const piece = pieceMap[pieceName];
+      const piece = pieceMap[resolvedPieceName];
       
-      console.log(`🎯 Detected: ${pieceName} takes ${square}`);
+      console.log(`🎯 Detected: ${resolvedPieceName} takes ${square}`);
       
       let candidates = legalMoves.filter(m => m.to === square && m.captured);
       
@@ -1197,18 +1214,35 @@ export class GlobalVoiceParser {
 
     // ========== PATTERN 7: DISAMBIGUATION (e.g., "knight from g1 to f3") ==========
     const disambigPattern = new RegExp(
-      `\\b(${pieceNames})\\s*(?:from|at)?\\s*([a-h][1-8])\\s*(?:to|on)?\\s*([a-h][1-8])\\b`,
+      `\\b(${pieceNames}|n|b|r|q|k|p)\\s*(?:from|at)?\\s*([a-h]|ay|eh|be|see|de|ee|ef|ge|aitch|ache|eich)[-_\\s]?([1-8]|one|two|three|four|five|six|seven|eight|ek|do|teen|char|panch|chha|saat|aat)\\s*(?:to|on)?\\s*([a-h]|ay|eh|be|see|de|ee|ef|ge|aitch|ache|eich)[-_\\s]?([1-8]|one|two|three|four|five|six|seven|eight|ek|do|teen|char|panch|chha|saat|aat)\\b`,
       'i'
     );
     
     const disambigMatch = processed.match(disambigPattern);
     if (disambigMatch) {
       const pieceName = disambigMatch[1].toLowerCase();
-      const from = disambigMatch[2];
-      const to = disambigMatch[3];
-      const piece = pieceMap[pieceName];
+      let fromFile = disambigMatch[2].toLowerCase();
+      let fromRank = disambigMatch[3].toLowerCase();
+      let toFile = disambigMatch[4].toLowerCase();
+      let toRank = disambigMatch[5].toLowerCase();
       
-      console.log(`🎯 Detected: ${pieceName} from ${from} to ${to}`);
+      // Resolve single letter piece names
+      const shortPieceMap: { [key: string]: string } = {
+        n: "knight", b: "bishop", r: "rook", q: "queen", k: "king", p: "pawn"
+      };
+      const resolvedPieceName = shortPieceMap[pieceName] || pieceName;
+      
+      // Map file and rank
+      fromFile = this.fileMap[fromFile] || fromFile;
+      fromRank = this.rankMap[fromRank] || fromRank;
+      toFile = this.fileMap[toFile] || toFile;
+      toRank = this.rankMap[toRank] || toRank;
+      
+      const from = fromFile + fromRank;
+      const to = toFile + toRank;
+      const piece = pieceMap[resolvedPieceName];
+      
+      console.log(`🎯 Detected: ${resolvedPieceName} from ${from} to ${to}`);
       
       let candidates = legalMoves.filter(m => m.from === from && m.to === to);
       

@@ -95,6 +95,15 @@ public class AuthController {
             
             System.out.println("👤 User found: " + u.getEmail() + ", Provider: " + u.getProvider());
             
+            // ✅ CHECK IF THIS IS AN OAUTH2 ACCOUNT
+            if (!"LOCAL".equals(u.getProvider())) {
+                System.out.println("❌ User registered with " + u.getProvider() + ", cannot use password login");
+                return ResponseEntity.status(403).body(Map.of(
+                    "success", false,
+                    "message", "This account is registered with " + u.getProvider() + ". Please use " + u.getProvider() + " to log in."
+                ));
+            }
+            
             // Check if user is enabled
             if (!u.isEnabled()) {
                 System.out.println("❌ User not enabled: " + req.email());
@@ -251,11 +260,20 @@ public class AuthController {
             System.out.println("🚪 Logout request received");
             
             String refresh = null;
+            Long userId = null;
+            
             if (req.getCookies() != null) {
                 for (Cookie c : req.getCookies()) {
                     if ("ch4e_refresh".equals(c.getName())) {
                         refresh = c.getValue();
-                        break;
+                    }
+                    if ("ch4e_access".equals(c.getName())) {
+                        try {
+                            String subject = jwtService.parseToken(c.getValue()).getBody().getSubject();
+                            userId = Long.valueOf(subject);
+                        } catch (Exception e) {
+                            System.out.println("⚠️ Could not parse user ID from token");
+                        }
                     }
                 }
             }
@@ -269,15 +287,63 @@ public class AuthController {
             
             System.out.println("✅ Logout successful");
             
+            // ✅ Return provider info if it's a Google user
+            String provider = "LOCAL";
+            if (userId != null) {
+                var user = userRepo.findById(userId);
+                if (user.isPresent() && "GOOGLE".equals(user.get().getProvider())) {
+                    provider = "GOOGLE";
+                }
+            }
+            
             return ResponseEntity.ok(Map.of(
                 "success", true,
-                "message", "Logged out successfully"
+                "message", "Logged out successfully",
+                "provider", provider
             ));
         } catch (Exception e) {
             System.out.println("❌ Logout error: " + e.getMessage());
             return ResponseEntity.status(500).body(Map.of(
                 "success", false,
                 "message", "Logout failed"
+            ));
+        }
+    }
+
+    @GetMapping("/check-email")
+    public ResponseEntity<?> checkEmail(String email) {
+        try {
+            System.out.println("🔍 Checking email: " + email);
+            
+            if (email == null || email.isBlank()) {
+                return ResponseEntity.badRequest().body(Map.of(
+                    "error", "Email is required"
+                ));
+            }
+            
+            var user = userRepo.findByEmail(email);
+            
+            if (user.isEmpty()) {
+                System.out.println("✅ Email not registered: " + email);
+                return ResponseEntity.ok(Map.of(
+                    "exists", false,
+                    "message", "Email not registered"
+                ));
+            }
+            
+            String provider = user.get().getProvider();
+            System.out.println("✅ Email found with provider: " + provider);
+            
+            return ResponseEntity.ok(Map.of(
+                "exists", true,
+                "provider", provider,
+                "message", "Email is registered with " + provider
+            ));
+            
+        } catch (Exception e) {
+            System.out.println("❌ Error checking email: " + e.getMessage());
+            return ResponseEntity.status(500).body(Map.of(
+                "error", "Internal server error"
             ));
         }
     }

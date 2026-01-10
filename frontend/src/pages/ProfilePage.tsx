@@ -1,64 +1,7 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthProvider";
-<<<<<<< HEAD
-import axios from "axios";
 import Navbar from "../components/Navbar/Navbar";
-import "./ProfilePage.css";
-
-// Create axios instance with base configuration
-const api = axios.create({
-  baseURL: "http://localhost:8080",
-  withCredentials: true,
-  headers: {
-    "Content-Type": "application/json",
-  },
-});
-
-// Profile Stats Interface
-export interface ProfileStats {
-  userId: number;
-  name: string;
-  username: string;
-  rating: number;
-  ratingChangeThisMonth: number;
-  globalRank: number;
-  gamesPlayed: number;
-  winRate: number;
-  currentStreak: number;
-  bestStreak: number;
-  timePlayed: string;
-  favoriteOpening: string;
-  wins: number;
-  draws: number;
-  losses: number;
-}
-
-// Performance Area Interface
-export interface PerformanceArea {
-  name: string;
-  score: number;
-  change: number;
-}
-
-// Recent Game Interface
-export interface RecentGame {
-  id: number;
-  opponentName: string;
-  result: string;
-  ratingChange: number;
-  accuracyPercentage: number;
-  timeAgo: string;
-}
-
-// API Functions
-const getProfileStats = async () => {
-  console.log("📡 API - Fetching profile stats");
-  const response = await api.get<ProfileStats>("/api/profile/stats");
-  console.log("✅ API - Profile stats received:", response.data);
-  return response;
-};
-=======
 import EditProfileModal from "../components/HomePage/EditProfileModal";
 import {
   getProfileStats,
@@ -73,61 +16,54 @@ import {
 import "./ProfilePage.css";
 
 const ProfilePage: React.FC = () => {
-  const { user, loading: authLoading } = useAuth();
-  const [stats, setStats] = useState<ProfileStats | null>(null);
-  const [userInfo, setUserInfo] = useState<UserInfo | null>(null);
-  const [performanceAreas, setPerformanceAreas] = useState<PerformanceArea[]>(
-    []
-  );
-  const [recentGames, setRecentGames] = useState<RecentGame[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [activeTab, setActiveTab] = useState<
-    "overview" | "games" | "ai-analysis"
-  >("overview");
-  const [isEditModalOpen, setIsEditModalOpen] = useState(false);
->>>>>>> 9e3eafa (some changes)
-
-const getPerformanceAreas = async () => {
-  console.log("📡 API - Fetching performance areas");
-  const response = await api.get<PerformanceArea[]>("/api/profile/performance");
-  console.log("✅ API - Performance areas received:", response.data);
-  return response;
-};
-
-const getRecentGames = async () => {
-  console.log("📡 API - Fetching recent games");
-  const response = await api.get<RecentGame[]>("/api/profile/recent-games");
-  console.log("✅ API - Recent games received:", response.data);
-  return response;
-};
-
-// Combined fetch function for convenience
-const getAllProfileData = async () => {
-  console.log("📡 API - Fetching all profile data");
-  const [statsRes, performanceRes, gamesRes] = await Promise.all([
-    getProfileStats(),
-    getPerformanceAreas(),
-    getRecentGames(),
-  ]);
-  
-  console.log("✅ API - All profile data received");
-  
-  return {
-    stats: statsRes.data,
-    performanceAreas: performanceRes.data,
-    recentGames: gamesRes.data,
-  };
-};
-
-const ProfilePage: React.FC = () => {
   const navigate = useNavigate();
   const { user, loading: authLoading, refetchUser } = useAuth();
   const [stats, setStats] = useState<ProfileStats | null>(null);
+  const [userInfo, setUserInfo] = useState<UserInfo | null>(null);
   const [performanceAreas, setPerformanceAreas] = useState<PerformanceArea[]>([]);
   const [recentGames, setRecentGames] = useState<RecentGame[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<"overview" | "games" | "ai-analysis">("overview");
+  const [isEditModalOpen, setIsEditModalOpen] = useState(false);
+
+  const fetchProfileData = useCallback(async () => {
+    setError(null);
+    setLoading(true);
+    
+    try {
+      console.log("📡 ProfilePage - Starting profile data fetch");
+      
+      const [statsRes, performanceRes, gamesRes, userInfoRes] = await Promise.all([
+        getProfileStats(),
+        getPerformanceAreas(),
+        getRecentGames(),
+        getUserInfo(),
+      ]);
+
+      console.log("📊 Profile data fetched successfully");
+      setStats(statsRes.data);
+      setUserInfo(userInfoRes.data);
+      setPerformanceAreas(performanceRes.data);
+      setRecentGames(gamesRes.data);
+    } catch (error: any) {
+      console.error("❌ ProfilePage - Error fetching profile data:", error);
+      
+      // Handle authentication errors
+      if (error?.response?.status === 401) {
+        console.log("🔄 ProfilePage - Got 401, redirecting to login");
+        setError("Session expired. Please log in again.");
+        setTimeout(() => navigate("/login"), 2000);
+        return;
+      }
+      
+      // Handle other errors
+      setError(error?.response?.data?.message || error?.message || "Failed to load profile data");
+    } finally {
+      console.log("🏁 ProfilePage - Setting loading to false");
+      setLoading(false);
+    }
+  }, [navigate]);
 
   // Wait for auth to complete, then fetch profile
   useEffect(() => {
@@ -138,7 +74,7 @@ const ProfilePage: React.FC = () => {
     
     if (authLoading) {
       console.log("⏳ ProfilePage - Still loading authentication...");
-      return; // Wait for auth to complete
+      return;
     }
 
     if (!user) {
@@ -148,79 +84,22 @@ const ProfilePage: React.FC = () => {
       return;
     }
 
-    // User is authenticated, fetch profile data
     console.log("✅ ProfilePage - User authenticated, fetching profile data");
     fetchProfileData();
-  }, [authLoading, user, navigate]);
+  }, [authLoading, user, fetchProfileData, navigate]);
 
-  const fetchProfileData = async () => {
-    setError(null);
-    setLoading(true);
+  // Add a timeout to prevent infinite loading state
+  useEffect(() => {
+    if (!authLoading) return;
     
-    try {
-<<<<<<< HEAD
-      console.log("📡 ProfilePage - Starting profile data fetch");
-      
-      const { stats, performanceAreas, recentGames } = await getAllProfileData();
-      
-      console.log("✅ ProfilePage - All data received successfully");
-      setStats(stats);
-      setPerformanceAreas(performanceAreas);
-      setRecentGames(recentGames);
-      
-    } catch (error: any) {
-      console.error("❌ ProfilePage - Error fetching profile data");
-      console.error("   Status:", error?.response?.status);
-      console.error("   Message:", error?.message);
-      
-      // Handle authentication errors
-      if (error?.response?.status === 401) {
-        console.log("🔄 ProfilePage - Got 401, attempting to refresh user");
-        
-        if (refetchUser) {
-          try {
-            await refetchUser();
-            console.log("✅ ProfilePage - User refreshed, retrying profile fetch");
-            // Retry will happen automatically via useEffect when user updates
-            return;
-          } catch (refreshError) {
-            console.error("❌ ProfilePage - Refresh failed, redirecting to login");
-            setError("Session expired. Please log in again.");
-            setTimeout(() => navigate("/login"), 2000);
-            return;
-          }
-        }
-        
-        setError("Session expired. Please log in again.");
-        setTimeout(() => navigate("/login"), 2000);
-        return;
-      }
-      
-      // Handle other errors
-      setError(error?.response?.data?.message || error?.message || "Failed to load profile data");
-      
-=======
-      const [statsRes, performanceRes, gamesRes, userInfoRes] =
-        await Promise.all([
-          getProfileStats(),
-          getPerformanceAreas(),
-          getRecentGames(),
-          getUserInfo(),
-        ]);
+    const timeoutId = setTimeout(() => {
+      console.warn("⚠️ ProfilePage - Auth loading timeout, forcing redirect");
+      setError("Authentication check timed out. Please log in again.");
+      setTimeout(() => navigate("/login"), 2000);
+    }, 15000); // 15 second timeout
 
-      console.log("📊 Profile data fetched successfully");
-      setStats(statsRes.data);
-      setUserInfo(userInfoRes.data);
-      setPerformanceAreas(performanceRes.data);
-      setRecentGames(gamesRes.data);
-    } catch (error) {
-      console.error("❌ Error fetching profile data:", error);
->>>>>>> 9e3eafa (some changes)
-    } finally {
-      console.log("🏁 ProfilePage - Setting loading to false");
-      setLoading(false);
-    }
-  };
+    return () => clearTimeout(timeoutId);
+  }, [authLoading, navigate]);
 
   const handleProfileUpdate = (updatedInfo: UserInfo) => {
     setUserInfo(updatedInfo);
@@ -234,16 +113,12 @@ const ProfilePage: React.FC = () => {
   };
 
   const getInitials = (name: string): string => {
-<<<<<<< HEAD
     if (!name) return "U";
-    return name.charAt(0).toUpperCase();
-=======
     return name
       .split(" ")
-      .map((n) => n.charAt(0).toUpperCase())
+      .map(word => word.charAt(0).toUpperCase())
       .join("")
       .slice(0, 2);
->>>>>>> 9e3eafa (some changes)
   };
 
   const formatGlobalRank = (rank: number): string => {
@@ -316,7 +191,6 @@ const ProfilePage: React.FC = () => {
     );
   }
 
-<<<<<<< HEAD
   // Show error if profile fetch failed
   if (error) {
     return (
@@ -349,10 +223,7 @@ const ProfilePage: React.FC = () => {
   }
 
   // Show error if stats not loaded
-  if (!stats) {
-=======
   if (!stats || !userInfo) {
->>>>>>> 9e3eafa (some changes)
     return (
       <>
         <Navbar rating={0} streak={0} />
@@ -383,7 +254,6 @@ const ProfilePage: React.FC = () => {
   }
 
   return (
-<<<<<<< HEAD
     <>
       <Navbar rating={stats.rating} streak={stats.currentStreak} />
       
@@ -391,7 +261,7 @@ const ProfilePage: React.FC = () => {
         {/* Profile Header */}
         <div className="profile-header">
           <div className="profile-avatar">
-            <div className="avatar-circle">{getInitials(stats.name)}</div>
+            <div className="avatar-circle">{getInitials(userInfo.name)}</div>
             <button className="avatar-upload">
               <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
                 <path d="M8 0a8 8 0 1 0 0 16A8 8 0 0 0 8 0zm3.5 7.5h-3v3h-1v-3h-3v-1h3v-3h1v3h3v1z" />
@@ -400,12 +270,15 @@ const ProfilePage: React.FC = () => {
           </div>
 
           <div className="profile-info">
-            <h1 className="profile-name">{stats.name}</h1>
-            <p className="profile-username">@{stats.username}</p>
+            <h1 className="profile-name">{userInfo.name}</h1>
+            <p className="profile-username">@{userInfo.email.split("@")[0]}</p>
           </div>
 
           <div className="profile-actions">
-            <button className="btn-edit">
+            <button
+              className="btn-edit"
+              onClick={() => setIsEditModalOpen(true)}
+            >
               <svg width="18" height="18" viewBox="0 0 18 18" fill="currentColor">
                 <path d="M12.5 1.5l4 4-9 9H3.5v-4l9-9zm0 1.41L4 11.41V13h1.59l8.5-8.5L12.5 2.91z" />
               </svg>
@@ -439,54 +312,6 @@ const ProfilePage: React.FC = () => {
               className={`stat-change ${
                 stats.ratingChangeThisMonth >= 0 ? "positive" : "negative"
               }`}
-=======
-    <div className="profile-container">
-      {/* Profile Header */}
-      <div className="profile-header">
-        <div className="profile-avatar">
-          <div className="avatar-circle">{getInitials(userInfo.name)}</div>
-          <button className="avatar-upload">
-            <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
-              <path d="M8 0a8 8 0 1 0 0 16A8 8 0 0 0 8 0zm3.5 7.5h-3v3h-1v-3h-3v-1h3v-3h1v3h3v1z" />
-            </svg>
-          </button>
-        </div>
-
-        <div className="profile-info">
-          <h1 className="profile-name">{userInfo.name}</h1>
-          <p className="profile-username">@{userInfo.email.split("@")[0]}</p>
-        </div>
-
-        <div className="profile-actions">
-          <button
-            className="btn-edit"
-            onClick={() => setIsEditModalOpen(true)}
-          >
-            <svg width="18" height="18" viewBox="0 0 18 18" fill="currentColor">
-              <path d="M12.5 1.5l4 4-9 9H3.5v-4l9-9zm0 1.41L4 11.41V13h1.59l8.5-8.5L12.5 2.91z" />
-            </svg>
-            Edit Profile
-          </button>
-          <button className="btn-share">
-            <svg width="18" height="18" viewBox="0 0 18 18" fill="currentColor">
-              <path d="M13.5 12c-.8 0-1.5.3-2 .8l-5.2-3c.1-.3.2-.5.2-.8s-.1-.5-.2-.8l5.2-3c.5.5 1.2.8 2 .8 1.7 0 3-1.3 3-3s-1.3-3-3-3-3 1.3-3 3c0 .3.1.5.2.8l-5.2 3c-.5-.5-1.2-.8-2-.8-1.7 0-3 1.3-3 3s1.3 3 3 3c.8 0 1.5-.3 2-.8l5.2 3c-.1.3-.2.5-.2.8 0 1.7 1.3 3 3 3s3-1.3 3-3-1.3-3-3-3z" />
-            </svg>
-          </button>
-        </div>
-      </div>
-
-      {/* Stats Overview */}
-      <div className="stats-overview">
-        <div className="stat-card rating">
-          <div className="stat-value">
-            {stats.rating}
-            <svg
-              className="rating-icon"
-              width="20"
-              height="20"
-              viewBox="0 0 20 20"
-              fill="currentColor"
->>>>>>> 9e3eafa (some changes)
             >
               {stats.ratingChangeThisMonth >= 0 ? "+" : ""}
               {stats.ratingChangeThisMonth} this month
@@ -885,9 +710,6 @@ const ProfilePage: React.FC = () => {
           )}
         </div>
       </div>
-<<<<<<< HEAD
-    </>
-=======
 
       {/* Edit Profile Modal */}
       <EditProfileModal
@@ -896,8 +718,7 @@ const ProfilePage: React.FC = () => {
         onClose={() => setIsEditModalOpen(false)}
         onUpdate={handleProfileUpdate}
       />
-    </div>
->>>>>>> 9e3eafa (some changes)
+    </>
   );
 };
 

@@ -122,8 +122,8 @@ public class OAuth2SuccessHandler extends SimpleUrlAuthenticationSuccessHandler 
             
             System.out.println("✅ OAuth login successful, redirecting to frontend");
             
-            // Redirect to frontend
-            response.sendRedirect("http://localhost:5173/home");
+            // ✅ Redirect to frontend with provider info so it can handle Google logout on next logout
+            response.sendRedirect("http://localhost:5173/home?oauth=true");
             
         } catch (Exception e) {
             System.err.println("❌ OAuth success handler error: " + e.getMessage());

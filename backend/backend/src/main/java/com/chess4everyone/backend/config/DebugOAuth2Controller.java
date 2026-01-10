@@ -3,6 +3,7 @@ package com.chess4everyone.backend.config;
 import java.util.HashMap;
 import java.util.Map;
 
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.security.oauth2.client.registration.ClientRegistrationRepository;
 import org.springframework.security.oauth2.client.web.DefaultOAuth2AuthorizationRequestResolver;
 import org.springframework.security.oauth2.core.endpoint.OAuth2AuthorizationRequest;
@@ -17,6 +18,7 @@ import jakarta.servlet.http.HttpServletRequest;
  * to see the exact authorizationRequestUri and redirect_uri that will be used.
  */
 @RestController
+@ConditionalOnProperty(name = "spring.security.oauth2.client.registration.google.client-id")
 public class DebugOAuth2Controller {
     private final DefaultOAuth2AuthorizationRequestResolver resolver;
 

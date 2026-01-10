@@ -3,6 +3,7 @@
 
 import { GlobalVoiceParser, type ParsedCommand } from './globalVoiceParser';
 import speechService from './speechService';
+import beepService from './beepService';
 
 export interface VoiceCommandCallback {
   (command: ParsedCommand): void;
@@ -99,6 +100,8 @@ const voiceCommandService = {
 
       recognition.onstart = () => {
         console.log("🎤 Voice recognition started");
+        // Play beep to indicate user's turn to speak
+        beepService.playTurnBeep().catch(err => console.warn("⚠️ Beep error:", err));
         this.setListeningState(true);
       };
 

@@ -5,6 +5,7 @@
 import { deepgramSTTService } from "./deepgramSTTService";
 import { deepgramTTSService } from "./deepgramTTSService";
 import { GlobalVoiceParser, type ParsedCommand } from "./globalVoiceParser";
+import beepService from "./beepService";
 
 export interface VoiceCommandCallback {
   (command: ParsedCommand): void;
@@ -69,6 +70,8 @@ class DeepgramVoiceCommandService {
         onListeningStart: () => {
           console.log("🎤 Voice commands active (Deepgram with Indian English)");
           try {
+            // Play beep to indicate user's turn to speak
+            beepService.playTurnBeep().catch(err => console.warn("⚠️ Beep error:", err));
             config.onListeningStart?.();
           } catch (e) {
             console.error("❌ Error in onListeningStart callback:", e);

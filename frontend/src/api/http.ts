@@ -1,40 +1,65 @@
 import axios from "axios";
 
-// Default to a relative base when running locally so Vite's proxy (configured
-// in vite.config.ts) will forward requests to the backend and cookies behave
-// as first-party. You can still set VITE_API_BASE in env to an absolute URL for
-// other environments.
 const baseURL = import.meta.env.VITE_API_BASE ?? "";
 
 const http = axios.create({
   baseURL,
   withCredentials: true, // << send/receive httpOnly cookies
+  timeout: 15000, // 15 second timeout for all requests
 });
 
 // --- Auto refresh access token on 401 then retry once
 let isRefreshing = false;
 let queue: Array<() => void> = [];
 
+http.interceptors.request.use(
+  (config) => {
+    console.log(`📤 HTTP ${config.method?.toUpperCase()} ${config.url}`);
+    return config;
+  },
+  (error) => {
+    console.error("❌ Request error:", error.message);
+    return Promise.reject(error);
+  }
+);
+
 http.interceptors.response.use(
-  (res) => res,
+  (res) => {
+    const url = res.config.url || "unknown";
+    console.log(`✅ HTTP ${res.status} ${url}`, res.data);
+    return res;
+  },
   async (error) => {
     const original = error.config;
     if (!original) return Promise.reject(error);
     
+    const url = original.url || "unknown";
+    console.warn(`⚠️ HTTP ${error?.response?.status} ${url}:`, error?.response?.data?.message || error?.message);
+    
     // Only retry if not already retried and not calling auth endpoints
     const isAuthEndpoint = original.url?.includes("/api/auth/");
     
-    if (error?.response?.status === 401 && !original._retry && !isAuthEndpoint) {
+    // Skip refresh for auth endpoints except refresh itself
+    const isRefreshEndpoint = original.url?.includes("/api/auth/refresh");
+    
+    if (error?.response?.status === 401 && !original._retry && !isAuthEndpoint && !isRefreshEndpoint) {
       original._retry = true;
 
       if (!isRefreshing) {
         isRefreshing = true;
         try {
-          await http.post("/api/auth/refresh");
+          console.log("🔄 Attempting token refresh...");
+          // Use a separate instance to avoid circular refresh
+          await axios.post(baseURL + "/api/auth/refresh", {}, { 
+            withCredentials: true,
+            timeout: 10000
+          });
+          console.log("✅ Token refresh successful");
           queue.forEach((fn) => fn());
           queue = [];
           return http(original);
-        } catch {
+        } catch (refreshErr: any) {
+          console.error("❌ Token refresh failed:", refreshErr?.response?.data?.message || refreshErr?.message);
           queue = [];
           // allow app to handle redirect to /login
           return Promise.reject(error);

@@ -10,6 +10,7 @@ import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import jakarta.persistence.JoinColumn;
+import jakarta.persistence.Lob;
 import jakarta.persistence.ManyToOne;
 import jakarta.persistence.Table;
 import lombok.Getter;
@@ -52,4 +53,37 @@ public class Game {
     
     @Column(name = "time_ago")
     private String timeAgo; // e.g., "2 hours ago", "1 day ago"
+    
+    // New fields for detailed game recording
+    @Lob
+    @Column(name = "pgn", columnDefinition = "LONGTEXT")
+    private String pgn; // Portable Game Notation
+    
+    @Lob
+    @Column(name = "moves_json", columnDefinition = "LONGTEXT")
+    private String movesJson; // JSON array of moves with FEN and metadata
+    
+    @Column(name = "white_rating")
+    private Integer whiteRating = 1200;
+    
+    @Column(name = "black_rating")
+    private Integer blackRating = 1200;
+    
+    @Column(name = "time_control")
+    private String timeControl; // e.g., "3+0", "10+0"
+    
+    @Column(name = "game_type")
+    private String gameType; // "STANDARD", "VOICE", "RAPID", etc.
+    
+    @Column(name = "termination_reason")
+    private String terminationReason; // "CHECKMATE", "RESIGNATION", "TIMEOUT", "STALEMATE", etc.
+    
+    @Column(name = "move_count")
+    private Integer moveCount = 0;
+    
+    @Column(name = "total_time_white")
+    private Long totalTimeWhiteMs = 0L; // milliseconds spent
+    
+    @Column(name = "total_time_black")
+    private Long totalTimeBlackMs = 0L; // milliseconds spent
 }
