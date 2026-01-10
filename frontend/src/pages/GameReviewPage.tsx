@@ -78,7 +78,7 @@ const GameReviewPage: React.FC = () => {
       
       setGameDetail(detail);
 
-      // Parse moves from JSON
+      // Parse moves from JSON (optional - game might still display even without moves)
       if (detail.movesJson) {
         try {
           console.log("📝 Parsing moves from JSON...");
@@ -92,11 +92,11 @@ const GameReviewPage: React.FC = () => {
         } catch (e) {
           console.error("❌ Failed to parse moves JSON:", e);
           console.error("   Moves JSON:", detail.movesJson?.substring(0, 200));
-          setError("Failed to parse game moves");
+          // Don't set error - still allow viewing game without moves
         }
       } else {
         console.warn("⚠️ No movesJson in game detail");
-        setError("Game has no moves data");
+        // Don't set error - game can still display
       }
 
       // Load analysis
@@ -165,6 +165,22 @@ const GameReviewPage: React.FC = () => {
     return `${evaluation > 0 ? "+" : ""}${evaluation.toFixed(2)}`;
   };
 
+  /**
+   * Get badge for move quality
+   */
+  const getMoveQualityBadge = (quality: string) => {
+    const badges: { [key: string]: { emoji: string; label: string; color: string } } = {
+      BRILLIANT: { emoji: "♦", label: "Brilliant", color: "#00d9ff" },
+      EXCELLENT: { emoji: "✓", label: "Excellent", color: "#4caf50" },
+      GOOD: { emoji: "•", label: "Good", color: "#8bc34a" },
+      OK: { emoji: "○", label: "OK", color: "#9e9e9e" },
+      INACCURACY: { emoji: "⚠", label: "Inaccuracy", color: "#ffc107" },
+      MISTAKE: { emoji: "⚡", label: "Mistake", color: "#ff9800" },
+      BLUNDER: { emoji: "✕", label: "Blunder", color: "#f44336" },
+    };
+    return badges[quality] || badges["OK"];
+  };
+
   const handlePreviousMove = () => {
     setCurrentMoveIndex(Math.max(0, currentMoveIndex - 1));
   };
@@ -228,7 +244,16 @@ const GameReviewPage: React.FC = () => {
       ? moveAnalysisList[currentMoveIndex]
       : null;
 
-  const moves = gameDetail.movesJson ? JSON.parse(gameDetail.movesJson) : [];
+  let moves: any[] = [];
+  try {
+    moves = gameDetail.movesJson ? JSON.parse(gameDetail.movesJson) : [];
+  } catch (e) {
+    console.error("Error parsing moves:", e);
+    moves = [];
+  }
+  
+  // Get current move
+  const currentMove = moves.length > currentMoveIndex ? moves[currentMoveIndex] : null;
 
   return (
     <>
@@ -249,7 +274,7 @@ const GameReviewPage: React.FC = () => {
               <div className="gr-board-header">
                 <h2>Move: {Math.floor(currentMoveIndex / 2) + 1}</h2>
                 <span className="gr-move-badge">
-                  {currentAnalysis?.san || "Start"}
+                  {currentMove?.san || "Start"}
                 </span>
               </div>
 
@@ -323,188 +348,152 @@ const GameReviewPage: React.FC = () => {
                   </span>
                 </div>
               </div>
+              {analysis?.openingName && (
+                <div style={{ marginTop: "15px", paddingTop: "15px", borderTop: "1px solid var(--border-color)" }}>
+                  <div style={{ fontSize: "14px", color: "var(--text-secondary)" }}>📖 Opening</div>
+                  <div style={{ fontSize: "16px", color: "var(--text-primary)", marginTop: "5px", fontWeight: "500" }}>
+                    {analysis.openingName}
+                  </div>
+                </div>
+              )}
             </div>
 
             {/* Move Analysis */}
-            {currentAnalysis && (
+            {currentMove && moveAnalysisList.length > 0 && moveAnalysisList[currentMoveIndex] && (
               <div className="gr-move-analysis-card">
-                <h2>Move Analysis</h2>
+                <h2>Current Move Analysis</h2>
                 <div className="gr-analysis-content">
-                  {/* Move with classification */}
                   <div className="gr-move-header">
                     <div className="gr-move-notation">
                       <span className="gr-move-number">
-                        {currentAnalysis.moveNumber}
-                        {currentAnalysis.moveIndex % 2 === 0 ? "." : "..."}
+                        {Math.floor(currentMoveIndex / 2) + 1}
+                        {currentMoveIndex % 2 === 0 ? "." : "..."}
                       </span>
-                      <span className="gr-move-san">{currentAnalysis.san}</span>
+                      <span className="gr-move-san">{currentMove.san}</span>
                     </div>
-                    <div className="gr-move-classification">
-                      {currentAnalysis.isBrilliant && (
-                        <span className="gr-badge brilliant">♦ Brilliant</span>
-                      )}
-                      {currentAnalysis.isExcellent && !currentAnalysis.isBrilliant && (
-                        <span className="gr-badge excellent">✓ Excellent</span>
-                      )}
-                      {currentAnalysis.isGood && !currentAnalysis.isExcellent && (
-                        <span className="gr-badge good">✓ Good</span>
-                      )}
-                      {currentAnalysis.isOk && !currentAnalysis.isGood && (
-                        <span className="gr-badge ok">• OK</span>
-                      )}
-                      {currentAnalysis.isInaccuracy && (
-                        <span className="gr-badge inaccuracy">⚠ Inaccuracy</span>
-                      )}
-                      {currentAnalysis.isMistake && !currentAnalysis.isInaccuracy && (
-                        <span className="gr-badge mistake">⚡ Mistake</span>
-                      )}
-                      {currentAnalysis.isBlunder && !currentAnalysis.isMistake && (
-                        <span className="gr-badge blunder">✕ Blunder</span>
-                      )}
+                    {moveAnalysisList[currentMoveIndex].quality && (
+                      <div style={{ display: "flex", gap: "10px", alignItems: "center" }}>
+                        {(() => {
+                          const badge = getMoveQualityBadge(moveAnalysisList[currentMoveIndex].quality);
+                          return (
+                            <div
+                              style={{
+                                background: badge.color,
+                                color: "#000",
+                                padding: "6px 12px",
+                                borderRadius: "6px",
+                                fontSize: "14px",
+                                fontWeight: "bold",
+                              }}
+                            >
+                              {badge.emoji} {badge.label}
+                            </div>
+                          );
+                        })()}
+                      </div>
+                    )}
+                  </div>
+                  <div style={{ padding: "15px 0", textAlign: "center", color: "var(--text-secondary)" }}>
+                    Move {currentMoveIndex + 1} of {moves.length}
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Move Analysis - Basic (when detailed analysis not available) */}
+            {currentMove && (moveAnalysisList.length === 0 || !moveAnalysisList[currentMoveIndex]) && (
+              <div className="gr-move-analysis-card">
+                <h2>Current Move</h2>
+                <div className="gr-analysis-content">
+                  <div className="gr-move-header">
+                    <div className="gr-move-notation">
+                      <span className="gr-move-number">
+                        {Math.floor(currentMoveIndex / 2) + 1}
+                        {currentMoveIndex % 2 === 0 ? "." : "..."}
+                      </span>
+                      <span className="gr-move-san">{currentMove.san}</span>
                     </div>
                   </div>
-
-                  {/* Evaluation bar - Chess.com style */}
-                  <div className="gr-evaluation-section">
-                    <div className="gr-eval-before-after">
-                      <div className="gr-eval-item">
-                        <span className="gr-eval-label">Before Move</span>
-                        <span className="gr-eval-number">
-                          {currentAnalysis.evaluationBefore > 0 ? "+" : ""}
-                          {currentAnalysis.evaluationBefore.toFixed(2)}
-                        </span>
-                      </div>
-                      <div className="gr-eval-arrow">→</div>
-                      <div className="gr-eval-item">
-                        <span className="gr-eval-label">After Move</span>
-                        <span className="gr-eval-number">
-                          {currentAnalysis.evaluationAfter > 0 ? "+" : ""}
-                          {currentAnalysis.evaluationAfter.toFixed(2)}
-                        </span>
-                      </div>
-                    </div>
-
-                    {/* Real-time evaluation bar */}
-                    <div className="gr-eval-bar-container">
-                      <div className="gr-eval-bar-label">Evaluation</div>
-                      <div className="gr-eval-bar">
-                        <div
-                          className="gr-eval-white"
-                          style={{
-                            width: `${getEvalBarWidth(
-                              currentAnalysis.evaluationAfter
-                            )}%`,
-                          }}
-                        />
-                      </div>
-                      <div className="gr-eval-bar-value">
-                        {formatEvaluation(currentAnalysis.evaluationAfter)}
-                      </div>
-                    </div>
+                  <div style={{ padding: "15px 0", textAlign: "center", color: "var(--text-secondary)" }}>
+                    Move {currentMoveIndex + 1} of {moves.length}
                   </div>
-
-                  {/* Evaluation delta */}
-                  <div className="gr-eval-delta">
-                    <span className="gr-delta-label">Position Change</span>
-                    <span
-                      className={`gr-delta-value ${
-                        currentAnalysis.evaluationAfter >
-                        currentAnalysis.evaluationBefore
-                          ? "positive"
-                          : "negative"
-                      }`}
-                    >
-                      {currentAnalysis.evaluationAfter >
-                      currentAnalysis.evaluationBefore
-                        ? "+"
-                        : ""}
-                      {(
-                        currentAnalysis.evaluationAfter -
-                        currentAnalysis.evaluationBefore
-                      ).toFixed(2)}
-                    </span>
-                  </div>
-
-                  {/* Best move suggestion */}
-                  {currentAnalysis.bestMove && (
-                    <div className="gr-best-move-section">
-                      <div className="gr-best-move-label">Best Move</div>
-                      <div className="gr-best-move-value">
-                        {currentAnalysis.bestMove}
-                      </div>
-                    </div>
-                  )}
                 </div>
               </div>
             )}
 
             {/* Game Statistics */}
-            {analysis && (
-              <div className="gr-stats-card">
-                <h2>📊 Game Statistics</h2>
-                <div className="gr-stats-grid">
-                  <div className="gr-stat-item">
-                    <div className="gr-stat-label">White Accuracy</div>
-                    <div className="gr-stat-bar">
-                      <div
-                        className="gr-stat-fill"
-                        style={{ width: `${analysis.whiteAccuracy ?? 0}%` }}
-                      />
+            <div className="gr-stats-card">
+              <h2>📊 Game Statistics</h2>
+              <div className="gr-stats-grid">
+                {analysis ? (
+                  <>
+                    <div className="gr-stat-item">
+                      <div className="gr-stat-label">White Accuracy</div>
+                      <div className="gr-stat-bar">
+                        <div
+                          className="gr-stat-fill"
+                          style={{ width: `${analysis.whiteAccuracy ?? 0}%` }}
+                        />
+                      </div>
+                      <div className="gr-stat-value">
+                        {(analysis.whiteAccuracy ?? 0).toFixed(1)}%
+                      </div>
                     </div>
-                    <div className="gr-stat-value">
-                      {(analysis.whiteAccuracy ?? 0).toFixed(1)}%
-                    </div>
-                  </div>
 
-                  <div className="gr-stat-item">
-                    <div className="gr-stat-label">Black Accuracy</div>
-                    <div className="gr-stat-bar">
-                      <div
-                        className="gr-stat-fill"
-                        style={{ width: `${analysis.blackAccuracy ?? 0}%` }}
-                      />
+                    <div className="gr-stat-item">
+                      <div className="gr-stat-label">Black Accuracy</div>
+                      <div className="gr-stat-bar">
+                        <div
+                          className="gr-stat-fill"
+                          style={{ width: `${analysis.blackAccuracy ?? 0}%` }}
+                        />
+                      </div>
+                      <div className="gr-stat-value">
+                        {(analysis.blackAccuracy ?? 0).toFixed(1)}%
+                      </div>
                     </div>
-                    <div className="gr-stat-value">
-                      {(analysis.blackAccuracy ?? 0).toFixed(1)}%
-                    </div>
-                  </div>
 
-                  <div className="gr-stat-item">
-                    <div className="gr-stat-label">White Blunders</div>
-                    <div className="gr-stat-count blunder">
-                      {analysis.whiteBlunders}
+                    <div className="gr-stat-item">
+                      <div className="gr-stat-label">White Blunders</div>
+                      <div className="gr-stat-count blunder">
+                        {analysis.whiteBlunders ?? 0}
+                      </div>
                     </div>
-                  </div>
 
-                  <div className="gr-stat-item">
-                    <div className="gr-stat-label">Black Blunders</div>
-                    <div className="gr-stat-count blunder">
-                      {analysis.blackBlunders}
+                    <div className="gr-stat-item">
+                      <div className="gr-stat-label">Black Blunders</div>
+                      <div className="gr-stat-count blunder">
+                        {analysis.blackBlunders ?? 0}
+                      </div>
                     </div>
-                  </div>
 
-                  <div className="gr-stat-item">
-                    <div className="gr-stat-label">White Mistakes</div>
-                    <div className="gr-stat-count mistake">
-                      {analysis.whiteMistakes}
+                    <div className="gr-stat-item">
+                      <div className="gr-stat-label">White Mistakes</div>
+                      <div className="gr-stat-count mistake">
+                        {analysis.whiteMistakes ?? 0}
+                      </div>
                     </div>
-                  </div>
 
-                  <div className="gr-stat-item">
-                    <div className="gr-stat-label">Black Mistakes</div>
-                    <div className="gr-stat-count mistake">
-                      {analysis.blackMistakes}
+                    <div className="gr-stat-item">
+                      <div className="gr-stat-label">Black Mistakes</div>
+                      <div className="gr-stat-count mistake">
+                        {analysis.blackMistakes ?? 0}
+                      </div>
                     </div>
-                  </div>
-                </div>
-
-                {analysis.openingName && (
-                  <div className="gr-opening-info">
-                    <h3>📖 Opening: {analysis.openingName}</h3>
+                  </>
+                ) : (
+                  <div style={{ padding: "20px", textAlign: "center", color: "var(--text-secondary)", gridColumn: "1 / -1" }}>
+                    ⏳ Analysis in progress...
                   </div>
                 )}
               </div>
-            )}
+
+              {analysis?.openingName && (
+                <div className="gr-opening-info">
+                  <h3>📖 Opening: {analysis.openingName}</h3>
+                </div>
+              )}
+            </div>
           </div>
         </div>
       </div>
