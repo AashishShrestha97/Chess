@@ -32,6 +32,14 @@ public class Game {
     @JoinColumn(name = "user_id", nullable = false)
     private User user;
     
+    @ManyToOne
+    @JoinColumn(name = "white_player_id")
+    private User whitePlayer;
+    
+    @ManyToOne
+    @JoinColumn(name = "black_player_id")
+    private User blackPlayer;
+    
     @Column(name = "opponent_name", nullable = false)
     private String opponentName;
     
@@ -72,6 +80,9 @@ public class Game {
     @Column(name = "time_control")
     private String timeControl; // e.g., "3+0", "10+0"
     
+    @Column(name = "opening_name")
+    private String openingName; // e.g., "Sicilian Defense", "Ruy Lopez"
+    
     @Column(name = "game_type")
     private String gameType; // "STANDARD", "VOICE", "RAPID", etc.
     
@@ -81,9 +92,9 @@ public class Game {
     @Column(name = "move_count")
     private Integer moveCount = 0;
     
-    @Column(name = "total_time_white")
+    @Column(name = "total_time_white_ms")
     private Long totalTimeWhiteMs = 0L; // milliseconds spent
     
-    @Column(name = "total_time_black")
+    @Column(name = "total_time_black_ms")
     private Long totalTimeBlackMs = 0L; // milliseconds spent
 }

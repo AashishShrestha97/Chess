@@ -14,6 +14,9 @@ export interface SaveGamePayload {
   totalTimeWhiteMs: number;
   totalTimeBlackMs: number;
   accuracyPercentage: number;
+  whitePlayerId?: number;
+  blackPlayerId?: number;
+  openingName?: string;
 }
 
 export interface GameDetail {
@@ -33,27 +36,34 @@ export interface GameDetail {
   accuracyPercentage: number;
   terminationReason: string;
   playedAt: string;
+  whitePlayerId?: number;
+  blackPlayerId?: number;
+  openingName?: string;
 }
 
 export interface GameAnalysis {
   gameId: number;
-  whiteAccuracy: number;
-  blackAccuracy: number;
-  whiteBlunders: number;
-  blackBlunders: number;
-  whiteMistakes: number;
-  blackMistakes: number;
-  movesAnalysis: string;
-  bestMovesByPhase: string;
-  keyMoments: string;
-  openingName: string;
-  openingPly: number;
-  openingScoreWhite: number;
-  openingScoreBlack: number;
-  middlegameScoreWhite: number;
-  middlegameScoreBlack: number;
-  endgameScoreWhite: number;
-  endgameScoreBlack: number;
+  whiteAccuracy?: number | null;
+  blackAccuracy?: number | null;
+  whiteBlunders?: number;
+  blackBlunders?: number;
+  whiteMistakes?: number;
+  blackMistakes?: number;
+  movesAnalysis?: string;
+  bestMovesByPhase?: string;
+  keyMoments?: string;
+  openingName?: string;
+  openingPly?: number;
+  openingScoreWhite?: number | null;
+  openingScoreBlack?: number | null;
+  middlegameScoreWhite?: number | null;
+  middlegameScoreBlack?: number | null;
+  endgameScoreWhite?: number | null;
+  endgameScoreBlack?: number | null;
+  // Fields that might appear in 202 processing response
+  status?: string;
+  error?: string;
+  message?: string;
 }
 
 export interface RecentGame {

@@ -1,7 +1,5 @@
 package com.chess4everyone.backend.dto;
 
-import java.util.List;
-
 public record GameDetailDto(
     Long id,
     String opponentName,
@@ -18,5 +16,8 @@ public record GameDetailDto(
     Integer ratingChange,
     Integer accuracyPercentage,
     String terminationReason,
-    String playedAt
+    String playedAt,
+    Long whitePlayerId,
+    Long blackPlayerId,
+    String openingName
 ) {}

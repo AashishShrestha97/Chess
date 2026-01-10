@@ -53,6 +53,7 @@ public class SecurityConfig {
                     "/api/auth/register",
                     "/api/auth/login",
                     "/api/auth/refresh",
+                    "/api/deepgram/**",
                     "/oauth2/**",
                     "/login/oauth2/**"
                 ).permitAll()

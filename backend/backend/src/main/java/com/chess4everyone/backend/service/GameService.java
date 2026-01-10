@@ -47,6 +47,8 @@ public class GameService {
         
         Game game = new Game();
         game.setUser(user);
+        game.setWhitePlayer(request.whitePlayerId() != null ? userRepository.findById(request.whitePlayerId()).orElse(null) : null);
+        game.setBlackPlayer(request.blackPlayerId() != null ? userRepository.findById(request.blackPlayerId()).orElse(null) : null);
         game.setOpponentName(request.opponentName());
         game.setResult(request.result());
         game.setPgn(request.pgn());
@@ -54,6 +56,7 @@ public class GameService {
         game.setWhiteRating(request.whiteRating());
         game.setBlackRating(request.blackRating());
         game.setTimeControl(request.timeControl());
+        game.setOpeningName(request.openingName());
         game.setGameType(request.gameType());
         game.setTerminationReason(request.terminationReason());
         game.setMoveCount(request.moveCount());
@@ -99,7 +102,10 @@ public class GameService {
             game.getRatingChange(),
             game.getAccuracyPercentage(),
             game.getTerminationReason(),
-            game.getPlayedAt().toString()
+            game.getPlayedAt().toString(),
+            game.getWhitePlayer() != null ? game.getWhitePlayer().getId() : null,
+            game.getBlackPlayer() != null ? game.getBlackPlayer().getId() : null,
+            game.getOpeningName()
         );
     }
 
@@ -121,31 +127,37 @@ public class GameService {
 
     /**
      * Get analysis for a game
+     * Returns null if analysis is not available (still being processed)
      */
     public GameAnalysisDto getGameAnalysis(Long gameId) {
-        GameAnalysis analysis = analysisRepository.findByGameId(gameId)
-            .orElseThrow(() -> new RuntimeException("Analysis not found"));
-        
-        return new GameAnalysisDto(
-            analysis.getGame().getId(),
-            analysis.getWhiteAccuracy(),
-            analysis.getBlackAccuracy(),
-            analysis.getWhiteBlunders(),
-            analysis.getBlackBlunders(),
-            analysis.getWhiteMistakes(),
-            analysis.getBlackMistakes(),
-            analysis.getMovesAnalysis(),
-            analysis.getBestMovesByPhase(),
-            analysis.getKeyMoments(),
-            analysis.getOpeningName(),
-            analysis.getOpeningPly(),
-            analysis.getOpeningScoreWhite(),
-            analysis.getOpeningScoreBlack(),
-            analysis.getMiddlegameScoreWhite(),
-            analysis.getMiddlegameScoreBlack(),
-            analysis.getEndgameScoreWhite(),
-            analysis.getEndgameScoreBlack()
-        );
+        try {
+            GameAnalysis analysis = analysisRepository.findByGameId(gameId)
+                .orElseThrow(() -> new RuntimeException("Analysis not found for game: " + gameId));
+            
+            return new GameAnalysisDto(
+                analysis.getGame().getId(),
+                analysis.getWhiteAccuracy(),
+                analysis.getBlackAccuracy(),
+                analysis.getWhiteBlunders(),
+                analysis.getBlackBlunders(),
+                analysis.getWhiteMistakes(),
+                analysis.getBlackMistakes(),
+                analysis.getMovesAnalysis(),
+                analysis.getBestMovesByPhase(),
+                analysis.getKeyMoments(),
+                analysis.getOpeningName(),
+                analysis.getOpeningPly(),
+                analysis.getOpeningScoreWhite(),
+                analysis.getOpeningScoreBlack(),
+                analysis.getMiddlegameScoreWhite(),
+                analysis.getMiddlegameScoreBlack(),
+                analysis.getEndgameScoreWhite(),
+                analysis.getEndgameScoreBlack()
+            );
+        } catch (RuntimeException e) {
+            System.out.println("⚠️ Analysis not yet available for game " + gameId + ": " + e.getMessage());
+            throw e; // Let controller handle the error response
+        }
     }
 
     /**
@@ -155,7 +167,10 @@ public class GameService {
         // Run in a separate thread to not block the game save
         new Thread(() -> {
             try {
-                System.out.println("🔍 Starting analysis for game: " + game.getId());
+                System.out.println("🔍 Starting async analysis thread for game: " + game.getId());
+                System.out.println("   Game ID: " + game.getId());
+                System.out.println("   PGN present: " + (game.getPgn() != null && !game.getPgn().isEmpty()));
+                System.out.println("   Calling stockfishService.analyzeGame()...");
                 stockfishService.analyzeGame(game);
                 System.out.println("✅ Analysis completed for game: " + game.getId());
             } catch (Exception e) {

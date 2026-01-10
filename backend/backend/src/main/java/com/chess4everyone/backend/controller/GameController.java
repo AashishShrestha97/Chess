@@ -137,7 +137,7 @@ public class GameController {
      */
     @GetMapping("/{gameId}/analysis")
     public ResponseEntity<?> getGameAnalysis(@PathVariable Long gameId, HttpServletRequest req) {
-        System.out.println("🔍 GET /api/games/{gameId}/analysis - Getting analysis: " + gameId);
+        System.out.println("🔍 GET /api/games/{gameId}/analysis - Getting analysis for game: " + gameId);
         
         Long userId = getUserIdFromRequest(req);
         if (userId == null) {
@@ -148,12 +148,24 @@ public class GameController {
 
         try {
             GameAnalysisDto analysis = gameService.getGameAnalysis(gameId);
+            System.out.println("✅ Analysis found for game: " + gameId);
             return ResponseEntity.ok(analysis);
             
+        } catch (RuntimeException e) {
+            System.out.println("⚠️ Analysis not available for game " + gameId + ": " + e.getMessage());
+            // Return 202 (Accepted) with message that analysis is still being processed
+            return ResponseEntity.status(202).body(Map.of(
+                "error", "Analysis not found or still being processed",
+                "message", "The analysis for this game is being computed. Please try again in a few moments.",
+                "gameId", gameId,
+                "status", "processing"
+            ));
         } catch (Exception e) {
-            System.out.println("⚠️ Analysis not available: " + e.getMessage());
-            return ResponseEntity.status(404).body(Map.of(
-                "error", "Analysis not found or still being processed"
+            System.out.println("❌ Unexpected error getting analysis for game " + gameId + ": " + e.getMessage());
+            e.printStackTrace();
+            return ResponseEntity.status(500).body(Map.of(
+                "error", "Failed to get analysis",
+                "message", e.getMessage()
             ));
         }
     }

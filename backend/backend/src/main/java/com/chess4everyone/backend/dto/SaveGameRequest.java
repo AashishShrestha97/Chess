@@ -1,7 +1,5 @@
 package com.chess4everyone.backend.dto;
 
-import java.util.List;
-
 public record SaveGameRequest(
     String opponentName,
     String result, // "WIN", "LOSS", "DRAW"
@@ -15,5 +13,8 @@ public record SaveGameRequest(
     Integer moveCount,
     Long totalTimeWhiteMs,
     Long totalTimeBlackMs,
-    Integer accuracyPercentage
+    Integer accuracyPercentage,
+    Long whitePlayerId,
+    Long blackPlayerId,
+    String openingName
 ) {}

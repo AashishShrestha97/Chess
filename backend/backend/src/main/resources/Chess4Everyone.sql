@@ -70,14 +70,55 @@ CREATE TABLE IF NOT EXISTS user_profiles (
 CREATE TABLE IF NOT EXISTS games (
   id BIGINT PRIMARY KEY AUTO_INCREMENT,
   user_id BIGINT NOT NULL,
-  opponent_name VARCHAR(150),
+  white_player_id BIGINT,
+  black_player_id BIGINT,
+  opponent_name VARCHAR(150) NOT NULL,
   result VARCHAR(10),
   rating_change INT DEFAULT 0,
   accuracy_percentage INT,
   game_duration VARCHAR(20),
   played_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   time_ago VARCHAR(50),
-  CONSTRAINT fk_game_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+  pgn LONGTEXT,
+  moves_json LONGTEXT,
+  white_rating INT DEFAULT 1200,
+  black_rating INT DEFAULT 1200,
+  time_control VARCHAR(20),
+  opening_name VARCHAR(255),
+  game_type VARCHAR(50),
+  termination_reason VARCHAR(100),
+  move_count INT DEFAULT 0,
+  total_time_white_ms BIGINT DEFAULT 0,
+  total_time_black_ms BIGINT DEFAULT 0,
+  CONSTRAINT fk_game_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+  CONSTRAINT fk_game_white_player FOREIGN KEY (white_player_id) REFERENCES users(id) ON DELETE SET NULL,
+  CONSTRAINT fk_game_black_player FOREIGN KEY (black_player_id) REFERENCES users(id) ON DELETE SET NULL
+);
+
+-- Game analysis table - stores analysis results for games
+CREATE TABLE IF NOT EXISTS game_analysis (
+  id BIGINT PRIMARY KEY AUTO_INCREMENT,
+  game_id BIGINT NOT NULL UNIQUE,
+  analyzed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  moves_analysis LONGTEXT,
+  white_accuracy DOUBLE DEFAULT 0.0,
+  black_accuracy DOUBLE DEFAULT 0.0,
+  white_blunders INT DEFAULT 0,
+  black_blunders INT DEFAULT 0,
+  white_mistakes INT DEFAULT 0,
+  black_mistakes INT DEFAULT 0,
+  best_moves_by_phase LONGTEXT,
+  key_moments LONGTEXT,
+  opening_name VARCHAR(255),
+  opening_ply INT DEFAULT 0,
+  opening_score_white DOUBLE DEFAULT 0.0,
+  opening_score_black DOUBLE DEFAULT 0.0,
+  middlegame_score_white DOUBLE DEFAULT 0.0,
+  middlegame_score_black DOUBLE DEFAULT 0.0,
+  endgame_score_white DOUBLE DEFAULT 0.0,
+  endgame_score_black DOUBLE DEFAULT 0.0,
+  CONSTRAINT fk_analysis_game FOREIGN KEY (game_id) REFERENCES games(id) ON DELETE CASCADE,
+  INDEX idx_game_id (game_id)
 );
 
 SHOW TABLES;

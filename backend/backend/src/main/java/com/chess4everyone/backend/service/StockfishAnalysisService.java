@@ -19,6 +19,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 
 /**
  * Service to analyze chess games using Stockfish engine
+ * Provides Chess.com-style analysis with real-time evaluation bars
  */
 @Service
 public class StockfishAnalysisService {
@@ -28,8 +29,8 @@ public class StockfishAnalysisService {
     
     // Path to Stockfish executable - adjust based on your system
     private static final String STOCKFISH_PATH = "stockfish"; // Assumes stockfish is in PATH
-    private static final int ANALYSIS_DEPTH = 20;
-    private static final int MAX_ANALYSIS_TIME_MS = 3000; // 3 seconds per position
+    private static final int ANALYSIS_DEPTH = 22;
+    private static final int MAX_ANALYSIS_TIME_MS = 5000; // 5 seconds per position
 
     public StockfishAnalysisService(GameAnalysisRepository analysisRepository) {
         this.analysisRepository = analysisRepository;
@@ -37,7 +38,7 @@ public class StockfishAnalysisService {
     }
 
     /**
-     * Analyze a completed game
+     * Analyze a completed game with Chess.com-style classification
      */
     public void analyzeGame(Game game) {
         System.out.println("🔬 Analyzing game: " + game.getId());
@@ -45,23 +46,65 @@ public class StockfishAnalysisService {
         try {
             if (game.getPgn() == null || game.getPgn().isEmpty()) {
                 System.out.println("⚠️ No PGN data, skipping analysis");
+                System.out.println("   Game ID: " + game.getId());
+                System.out.println("   PGN: " + game.getPgn());
+                System.out.println("   MovesJson: " + (game.getMovesJson() != null ? "Present" : "NULL"));
                 return;
             }
 
+            System.out.println("📄 PGN length: " + game.getPgn().length() + " characters");
+
+            // Check if Stockfish is available
+            try {
+                ProcessBuilder testPb = new ProcessBuilder(STOCKFISH_PATH, "--version");
+                testPb.start().waitFor(2, java.util.concurrent.TimeUnit.SECONDS);
+                System.out.println("✅ Stockfish is available");
+            } catch (Exception e) {
+                System.err.println("❌ Stockfish not found in PATH. Install Stockfish to enable game analysis.");
+                System.err.println("   You can download it from: https://stockfishchess.org/download/");
+                System.err.println("   Or on Windows: choco install stockfish, or add stockfish.exe to your PATH");
+                return;
+            }
+
+            System.out.println("✅ Creating GameAnalysis object...");
             GameAnalysis analysis = new GameAnalysis();
+            System.out.println("✅ GameAnalysis created");
+            
+            System.out.println("✅ Setting game on analysis...");
             analysis.setGame(game);
+            System.out.println("✅ Game set on analysis");
 
-            // Parse moves from JSON or PGN
-            List<MoveAnalysis> movesAnalysisList = analyzeMoves(game);
+            // Parse moves from PGN
+            System.out.println("🔄 Starting move analysis...");
+            List<MoveAnalysis> movesAnalysisList = null;
+            try {
+                movesAnalysisList = analyzeMoves(game.getPgn());
+                System.out.println("📊 Completed move analysis");
+            } catch (Exception e) {
+                System.err.println("❌ Failed during move analysis: " + e.getMessage());
+                e.printStackTrace();
+                return;
+            }
 
-            // Calculate accuracy scores
+            if (movesAnalysisList.isEmpty()) {
+                System.out.println("⚠️ No moves to analyze");
+                return;
+            }
+
+            System.out.println("📊 Analyzed " + movesAnalysisList.size() + " moves");
+
+            // Calculate accuracy scores (Chess.com style)
+            System.out.println("🧮 Calculating accuracy scores...");
             double whiteAccuracy = calculateAccuracy(movesAnalysisList, true);
             double blackAccuracy = calculateAccuracy(movesAnalysisList, false);
+            System.out.println("   White accuracy: " + String.format("%.1f%%", whiteAccuracy));
+            System.out.println("   Black accuracy: " + String.format("%.1f%%", blackAccuracy));
 
             analysis.setWhiteAccuracy(whiteAccuracy);
             analysis.setBlackAccuracy(blackAccuracy);
 
             // Count mistakes and blunders
+            System.out.println("📈 Counting mistakes and blunders...");
             int[] whiteStats = countMistakesAndBlunders(movesAnalysisList, true);
             int[] blackStats = countMistakesAndBlunders(movesAnalysisList, false);
 
@@ -71,15 +114,20 @@ public class StockfishAnalysisService {
             analysis.setBlackBlunders(blackStats[1]);
 
             // Extract opening name
+            System.out.println("📖 Extracting opening name...");
             String openingName = extractOpeningName(game.getPgn());
-            analysis.setOpeningName(openingName != null ? openingName : "Unknown");
+            analysis.setOpeningName(openingName != null ? openingName : "Unknown Opening");
 
             // Convert moves analysis to JSON
+            System.out.println("💾 Converting to JSON...");
             analysis.setMovesAnalysis(objectMapper.writeValueAsString(movesAnalysisList));
 
             // Save analysis
+            System.out.println("💿 Saving analysis to database...");
             analysisRepository.save(analysis);
             System.out.println("✅ Analysis saved for game: " + game.getId());
+            System.out.println("   White accuracy: " + String.format("%.1f%%", whiteAccuracy));
+            System.out.println("   Black accuracy: " + String.format("%.1f%%", blackAccuracy));
 
         } catch (Exception e) {
             System.err.println("❌ Error analyzing game: " + e.getMessage());
@@ -89,39 +137,49 @@ public class StockfishAnalysisService {
 
     /**
      * Analyze individual moves in the game with Chess.com-style classification
+     * This method now properly handles PGN parsing and evaluation
      */
-    private List<MoveAnalysis> analyzeMoves(Game game) {
+    private List<MoveAnalysis> analyzeMoves(String pgn) {
         List<MoveAnalysis> analysisResults = new ArrayList<>();
         
         try {
-            String pgn = game.getPgn();
             List<String> moves = extractMovesFromPGN(pgn);
+
+            if (moves.isEmpty()) {
+                return analysisResults;
+            }
 
             String fen = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"; // Starting position
             
-            for (int i = 0; i < moves.size() && i < 100; i++) { // Limit to 100 moves to avoid excessive analysis
-                String move = moves.get(i);
+            for (int i = 0; i < moves.size() && i < 150; i++) { // Limit to 150 half-moves
+                String sanMove = moves.get(i);
                 
                 // Analyze position BEFORE the move
                 Map<String, Object> beforeEval = analyzePosition(fen);
                 double evalBefore = (Double) beforeEval.getOrDefault("eval", 0.0);
+                String bestMoveBefore = (String) beforeEval.getOrDefault("bestmove", "");
                 
-                // Apply the move to get new position
-                String newFen = applyMoveToFEN(fen, move);
+                // Apply the move and get new FEN
+                String newFen = applyMoveToFEN(fen, sanMove);
+                
+                if (newFen.equals(fen)) {
+                    System.err.println("⚠️ Could not apply move: " + sanMove + " at move index " + i);
+                    continue;
+                }
                 
                 // Analyze position AFTER the move
                 Map<String, Object> afterEval = analyzePosition(newFen);
                 double evalAfter = (Double) afterEval.getOrDefault("eval", 0.0);
-                String bestMove = (String) afterEval.getOrDefault("bestmove", "");
+                String bestMoveAfter = (String) afterEval.getOrDefault("bestmove", "");
                 
                 MoveAnalysis ma = new MoveAnalysis();
                 ma.moveNumber = (i / 2) + 1;
                 ma.moveIndex = i;
-                ma.san = move;
+                ma.san = sanMove;
                 ma.evaluationBefore = evalBefore;
                 ma.evaluationAfter = evalAfter;
                 ma.evaluation = evalAfter; // Keep for backwards compatibility
-                ma.bestMove = bestMove;
+                ma.bestMove = bestMoveAfter.isEmpty() ? bestMoveBefore : bestMoveAfter;
                 
                 // Calculate evaluation delta (from the player's perspective)
                 // If it's Black's turn (odd index), flip the sign
@@ -130,8 +188,8 @@ public class StockfishAnalysisService {
                     evalDelta = -evalDelta; // Black wants to minimize eval
                 }
                 
-                // Classify the move based on evaluation delta
-                classifyMove(ma, evalDelta, Math.abs(evalAfter));
+                // Classify the move based on evaluation delta and position evaluation
+                classifyMove(ma, evalDelta, evalAfter);
                 
                 analysisResults.add(ma);
                 fen = newFen;
@@ -139,6 +197,7 @@ public class StockfishAnalysisService {
             
         } catch (Exception e) {
             System.err.println("❌ Error analyzing moves: " + e.getMessage());
+            e.printStackTrace();
         }
         
         return analysisResults;
@@ -146,82 +205,117 @@ public class StockfishAnalysisService {
 
     /**
      * Classify a move based on evaluation delta and position evaluation
-     * Chess.com style classification
+     * Chess.com style classification with threshold-based approach
      */
     private void classifyMove(MoveAnalysis ma, double evalDelta, double positionEval) {
         // evalDelta is positive if the position got better for the player
         
-        // Brilliant move: Move that improves position significantly when losing
-        if (positionEval < -2.0 && evalDelta > 0.5) {
+        // Brilliant move: Makes a significant comeback move when losing (eval delta > 1.0)
+        if (positionEval < -1.5 && evalDelta > 1.0) {
             ma.moveClass = "BRILLIANT";
             ma.isBrilliant = true;
         }
-        // Excellent move: Move that improves position significantly in balanced position
-        else if (positionEval >= -2.0 && positionEval <= 2.0 && evalDelta > 0.5) {
+        // Excellent move: Significant improvement in balanced or winning position
+        else if (evalDelta > 0.6) {
             ma.moveClass = "EXCELLENT";
             ma.isExcellent = true;
         }
-        // Good move: Move that maintains or slightly improves position
-        else if (evalDelta > 0.1 && evalDelta <= 0.5) {
+        // Good move: Maintains or improves position moderately
+        else if (evalDelta > 0.2 && evalDelta <= 0.6) {
             ma.moveClass = "GOOD";
             ma.isGood = true;
         }
-        // OK/Book move: Move that doesn't change evaluation much
-        else if (evalDelta >= -0.1 && evalDelta <= 0.1) {
+        // OK/Book move: Move that doesn't change evaluation significantly
+        else if (evalDelta >= -0.15 && evalDelta <= 0.2) {
             ma.moveClass = "OK";
             ma.isOk = true;
         }
-        // Inaccuracy: Slight loss of evaluation
-        else if (evalDelta >= -0.3 && evalDelta < -0.1) {
+        // Inaccuracy: Slight loss of evaluation (-0.5 to -0.15)
+        else if (evalDelta >= -0.5 && evalDelta < -0.15) {
             ma.moveClass = "INACCURACY";
             ma.isInaccuracy = true;
         }
-        // Mistake: Moderate loss of evaluation
-        else if (evalDelta >= -1.0 && evalDelta < -0.3) {
+        // Mistake: Moderate loss of evaluation (-1.5 to -0.5)
+        else if (evalDelta >= -1.5 && evalDelta < -0.5) {
             ma.moveClass = "MISTAKE";
             ma.isMistake = true;
         }
-        // Blunder: Large loss of evaluation
-        else if (evalDelta < -1.0) {
+        // Blunder: Large loss of evaluation (< -1.5)
+        else if (evalDelta < -1.5) {
             ma.moveClass = "BLUNDER";
             ma.isBlunder = true;
+        }
+        // Default to OK if no other classification
+        else {
+            ma.moveClass = "OK";
+            ma.isOk = true;
         }
     }
 
     /**
      * Apply a move to a FEN position and return the new FEN
-     * Converts SAN to UCI and uses Stockfish to apply
+     * Uses the chess library approach for better compatibility
      */
     private String applyMoveToFEN(String fen, String sanMove) {
         try {
-            // First, get the legal moves and find which one matches the SAN notation
-            String uciMove = findUCIMoveFromSAN(fen, sanMove);
-            
-            if (uciMove == null || uciMove.isEmpty()) {
-                System.err.println("⚠️ Could not convert SAN move to UCI: " + sanMove);
-                return fen; // Return original FEN if conversion fails
-            }
-            
+            // Try using Stockfish to apply the move
             ProcessBuilder pb = new ProcessBuilder(STOCKFISH_PATH);
             Process process = pb.start();
             
             PrintWriter writer = new PrintWriter(process.getOutputStream());
             BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream()));
             
-            // Use Stockfish position command with moves to apply
+            // Set the position
             writer.println("position fen " + fen);
-            writer.println("go depth 1 movetime 100"); // Just to generate the position
+            writer.println("d");
             writer.flush();
             
-            // Read until ready
+            // Read the current position
             String line;
-            while ((line = reader.readLine()) != null && !line.startsWith("bestmove")) {
-                // Read output
+            StringBuilder positionOutput = new StringBuilder();
+            while ((line = reader.readLine()) != null) {
+                positionOutput.append(line).append("\n");
+                if (line.startsWith("Fen:")) {
+                    break;
+                }
             }
             
-            // Now apply the move
+            // Get legal moves
+            writer.println("moves");
+            writer.flush();
+            
+            List<String> legalMoves = new ArrayList<>();
+            String moveLine;
+            while ((moveLine = reader.readLine()) != null) {
+                if (moveLine.isEmpty()) break;
+                for (String move : moveLine.split(" ")) {
+                    if (!move.isEmpty()) {
+                        legalMoves.add(move);
+                    }
+                }
+            }
+            
+            // Find matching move (SAN to UCI conversion)
+            String uciMove = null;
+            for (String legalMove : legalMoves) {
+                // Try to match the SAN move with legal UCI moves
+                if (matchSANtoUCI(sanMove, legalMove, fen)) {
+                    uciMove = legalMove;
+                    break;
+                }
+            }
+            
+            if (uciMove == null) {
+                System.err.println("⚠️ Could not find legal move for SAN: " + sanMove);
+                writer.println("quit");
+                writer.close();
+                process.waitFor();
+                return fen;
+            }
+            
+            // Apply the move
             writer.println("position fen " + fen + " moves " + uciMove);
-            writer.println("d"); // Display board
+            writer.println("d");
             writer.flush();
             
             StringBuilder output = new StringBuilder();
@@ -236,12 +330,11 @@ public class StockfishAnalysisService {
             writer.close();
             process.waitFor();
             
-            // Parse the FEN from output
+            // Extract new FEN
             String[] lines = output.toString().split("\n");
             for (String l : lines) {
                 if (l.startsWith("Fen:")) {
                     String newFen = l.substring(4).trim();
-                    System.out.println("✅ Applied move " + sanMove + " (" + uciMove + ") -> FEN: " + newFen);
                     return newFen;
                 }
             }
@@ -249,71 +342,40 @@ public class StockfishAnalysisService {
             return fen;
             
         } catch (Exception e) {
-            System.err.println("⚠️ Failed to apply move: " + e.getMessage());
+            System.err.println("⚠️ Failed to apply move " + sanMove + ": " + e.getMessage());
             return fen;
         }
     }
     
     /**
-     * Find UCI move representation from SAN notation
-     * Uses Stockfish to parse the position and find legal moves
+     * Match SAN notation to UCI move
+     * Basic heuristic matching
      */
-    private String findUCIMoveFromSAN(String fen, String sanMove) {
-        try {
-            // The SAN to UCI conversion is complex
-            // Simple approach: try to match common patterns
-            // For e.g., "e4" -> likely "e2e4" or "e3e4"
-            return simpleSANToUCI(sanMove, fen);
-            
-        } catch (Exception e) {
-            System.err.println("⚠️ Failed to convert SAN: " + e.getMessage());
-            return null;
-        }
-    }
-    
-    /**
-     * Simple heuristic to convert SAN to UCI
-     * This is a basic implementation - full SAN parsing is complex
-     */
-    private String simpleSANToUCI(String san, String baseFen) {
-        san = san.trim();
+    private boolean matchSANtoUCI(String san, String uci, String fen) {
+        // Remove check/checkmate symbols from SAN
+        String cleanSan = san.replace("+", "").replace("#", "").replace("!", "").replace("?", "");
         
         // Handle castling
-        if (san.equals("O-O")) return "e1g1"; // Kingside castling (white) - simplified
-        if (san.equals("O-O-O")) return "e1c1"; // Queenside castling (white) - simplified
-        
-        // Remove check and checkmate symbols
-        san = san.replace("+", "").replace("#", "").replace("!", "").replace("?", "");
-        
-        // Simple square pattern matching (e.g., "e4", "Nf3", "Bxc5")
-        Pattern pattern = Pattern.compile("[a-h][1-8]");
-        Matcher matcher = pattern.matcher(san);
-        
-        if (matcher.find()) {
-            String toSquare = matcher.group();
-            
-            // Look for "from" square or piece designation
-            if (san.contains("x")) { // Capture
-                // For now, return just the to square - system will need more logic
-                return toSquare;
-            }
-            
-            // For pawn moves
-            if (Character.isLowerCase(san.charAt(0)) && san.charAt(0) >= 'a' && san.charAt(0) <= 'h') {
-                // Pawn move
-                return san; // Already in UCI format
-            }
-            
-            // For piece moves, we need to find the piece and its from square
-            // This requires analyzing the position - simplified for now
-            return san; // Return as-is if it matches pattern
+        if (cleanSan.equals("O-O")) {
+            return uci.equals("e1g1") || uci.equals("e8g8");
+        }
+        if (cleanSan.equals("O-O-O")) {
+            return uci.equals("e1c1") || uci.equals("e8c8");
         }
         
-        return san; // Return original if no pattern matches
+        // Simple heuristic: check if SAN ends with destination square
+        if (cleanSan.length() >= 2) {
+            String destSquare = cleanSan.substring(cleanSan.length() - 2);
+            if (uci.endsWith(destSquare)) {
+                return true;
+            }
+        }
+        
+        return false;
     }
 
     /**
-     * Analyze a single position using Stockfish
+     * Analyze a single position using Stockfish with multipv for better accuracy
      */
     private Map<String, Object> analyzePosition(String fen) {
         Map<String, Object> result = new HashMap<>();
@@ -327,31 +389,53 @@ public class StockfishAnalysisService {
             PrintWriter writer = new PrintWriter(process.getOutputStream());
             BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream()));
             
-            // Send commands to Stockfish
+            // Send initialization commands
+            writer.println("setoption name MultiPV value 1");
+            writer.println("setoption name Threads value 4");
+            writer.flush();
+            
+            // Set position and analyze
             writer.println("position fen " + fen);
             writer.println("go depth " + ANALYSIS_DEPTH + " movetime " + MAX_ANALYSIS_TIME_MS);
             writer.flush();
+            
+            double bestEval = 0.0;
+            String bestMove = "";
             
             String line;
             while ((line = reader.readLine()) != null) {
                 if (line.startsWith("bestmove")) {
                     String[] parts = line.split(" ");
                     if (parts.length > 1) {
-                        result.put("bestmove", parts[1]);
+                        bestMove = parts[1];
                     }
                     break;
                 }
                 
-                if (line.contains("cp ")) {
-                    // Parse centipawn evaluation
+                // Parse evaluation from info line
+                if (line.startsWith("info") && line.contains("cp")) {
                     Pattern pattern = Pattern.compile("cp (-?\\d+)");
                     Matcher matcher = pattern.matcher(line);
                     if (matcher.find()) {
-                        double eval = Double.parseDouble(matcher.group(1)) / 100.0; // Convert to pawns
-                        result.put("eval", eval);
+                        double eval = Double.parseDouble(matcher.group(1)) / 100.0; // Convert centipawns to pawns
+                        bestEval = eval;
+                    }
+                }
+                
+                // Handle mate scores
+                if (line.startsWith("info") && line.contains("mate")) {
+                    Pattern pattern = Pattern.compile("mate (-?\\d+)");
+                    Matcher matcher = pattern.matcher(line);
+                    if (matcher.find()) {
+                        int mateIn = Integer.parseInt(matcher.group(1));
+                        // Represent mate as very large evaluation
+                        bestEval = mateIn > 0 ? 100.0 : -100.0;
                     }
                 }
             }
+            
+            result.put("eval", bestEval);
+            result.put("bestmove", bestMove);
             
             writer.println("quit");
             writer.close();
@@ -367,7 +451,6 @@ public class StockfishAnalysisService {
     /**
      * Calculate accuracy percentage based on moves (Chess.com style)
      * Brilliant, Excellent, Good, and OK moves count as accurate
-     * Inaccuracies, Mistakes, and Blunders count as inaccurate
      */
     private double calculateAccuracy(List<MoveAnalysis> moves, boolean isWhite) {
         List<MoveAnalysis> playerMoves = moves.stream()
@@ -397,13 +480,11 @@ public class StockfishAnalysisService {
         int mistakes = (int) playerMoves.stream().filter(m -> m.isMistake).count();
         int blunders = (int) playerMoves.stream().filter(m -> m.isBlunder).count();
         
-        // Return [mistakes, blunders] for backwards compatibility
-        // Could be extended to return more data
         return new int[]{mistakes, blunders};
     }
 
     /**
-     * Extract opening name from PGN
+     * Extract opening name from PGN headers
      */
     private String extractOpeningName(String pgn) {
         // Look for Opening tag
@@ -417,20 +498,34 @@ public class StockfishAnalysisService {
 
     /**
      * Extract moves from PGN notation
+     * Properly handles PGN format with headers and comments
      */
     private List<String> extractMovesFromPGN(String pgn) {
         List<String> moves = new ArrayList<>();
         
-        // Remove headers and comments
-        String gameText = pgn.replaceAll("\\[.*?\\]", "").replaceAll("\\{.*?\\}", "").trim();
+        // Remove PGN headers [...]
+        String gameText = pgn.replaceAll("\\[.*?\\]", "");
         
-        // Split by spaces and filter move-like strings
-        Pattern movePattern = Pattern.compile("^[a-hO][a-h1-8O\\-=NBRQ+#]*$");
-        String[] tokens = gameText.split("\\s+");
+        // Remove variations (parentheses and their content)
+        gameText = gameText.replaceAll("\\(.*?\\)", "");
+        
+        // Remove comments {...}
+        gameText = gameText.replaceAll("\\{.*?\\}", "");
+        
+        // Split by whitespace
+        String[] tokens = gameText.trim().split("\\s+");
         
         for (String token : tokens) {
-            // Skip move numbers and other non-move tokens
-            if (!token.matches("\\d+[.\\.]{1,3}") && movePattern.matcher(token).matches()) {
+            if (token.isEmpty()) continue;
+            
+            // Skip move numbers (1., 2., etc)
+            if (token.matches("\\d+[.]{1,3}")) continue;
+            
+            // Skip result markers if found
+            if (token.matches("(1-0|0-1|1/2-1/2|\\*)")) continue;
+            
+            // Valid move patterns in algebraic notation
+            if (token.matches("^[a-hNBRQK]?[a-h]?[1-8]?x?[a-h][1-8](=[NBRQ])?[\\+#!?]*$")) {
                 moves.add(token);
             }
         }

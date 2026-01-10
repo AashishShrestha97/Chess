@@ -21,7 +21,7 @@ export interface DeepgramSTTConfig {
 class DeepgramSTTService {
   private socket: WebSocket | null = null;
   private audioContext: AudioContext | null = null;
-  private apiKey: string = "514598e9953aa63b766810b8e36ca4568df663fb";
+  private apiKey: string | null = null;
   private isActive: boolean = false;
   private isListening: boolean = false;
   private isPaused: boolean = false;
@@ -40,20 +40,26 @@ class DeepgramSTTService {
    */
   async initialize(): Promise<void> {
     if (this.apiKey) {
-      console.log("✅ Deepgram STT already initialized");
+      console.log("✅ Deepgram STT already initialized with API key");
       return;
     }
 
     try {
+      console.log("🔑 Fetching Deepgram API key from backend...");
       const response = await fetch("http://localhost:8080/api/deepgram/token");
       if (!response.ok) {
-        throw new Error(`Failed to get Deepgram token: ${response.status}`);
+        throw new Error(`Failed to get Deepgram token: ${response.status} ${response.statusText}`);
       }
       const data = await response.json();
+      
+      if (!data.token) {
+        throw new Error("No token in response from backend");
+      }
+      
       this.apiKey = data.token;
-      console.log("✅ Deepgram STT initialized");
+      console.log("✅ Deepgram STT initialized with token from backend");
     } catch (error) {
-      console.error("❌ Failed to get Deepgram token:", error);
+      console.error("❌ Failed to get Deepgram token from backend:", error);
       throw error;
     }
   }

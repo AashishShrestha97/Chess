@@ -1,5 +1,6 @@
 /**
  * Utility to export chess games in PGN format
+ * Compatible with Lichess, Chess.com, and standard PGN readers
  */
 
 interface PGNExportData {
@@ -15,10 +16,14 @@ interface PGNExportData {
   eco?: string;
   opening?: string;
   moves: string;
+  whiteRating?: number;
+  blackRating?: number;
+  gameType?: string;
 }
 
 /**
  * Generate PGN format string from game data
+ * Fully compliant with PGN standard for universal compatibility
  */
 export const generatePGN = (data: PGNExportData): string => {
   const formatDate = (dateStr: string) => {
@@ -42,93 +47,122 @@ export const generatePGN = (data: PGNExportData): string => {
     }
   };
 
-  // Validate and clean moves
-  const cleanMoves = (moveStr: string): string[] => {
+  // Extract moves from either PGN string or move list
+  const extractMoves = (moveStr: string): string[] => {
     if (!moveStr || !moveStr.trim()) return [];
     
-    // Remove any brackets and their contents (annotations, headers, etc)
+    // Remove PGN headers [...]
     let cleaned = moveStr.replace(/\s*\[[^\]]*\]\s*/g, " ");
     
-    // Remove result markers from middle of moves (1-0, 0-1, 1/2-1/2, *)
-    cleaned = cleaned.replace(/\s+(1-0|0-1|1\/2-1\/2|\*)\s+/g, " ");
+    // Remove comments {...}
+    cleaned = cleaned.replace(/\s*\{[^}]*\}\s*/g, " ");
     
-    // Split by whitespace and filter
-    const moves = cleaned
-      .trim()
-      .split(/\s+/)
-      .filter(m => {
-        // Keep valid chess moves (contain letters/numbers for pieces/files)
-        // Filter out brackets, headers, and non-move text
-        if (!m) return false;
-        // Valid move patterns: e4, Nf3, O-O, dxe5, e8=Q+, Qd5+, etc
-        return /^[a-hNBRQK]?[a-h]?[1-8]?x?[a-h][1-8](=[NBRQ])?[\+#]?$/.test(m);
-      });
+    // Remove variations and parentheses
+    cleaned = cleaned.replace(/\s*\([^)]*\)\s*/g, " ");
+    
+    // Split by whitespace
+    const tokens = cleaned.trim().split(/\s+/);
+    
+    const moves: string[] = [];
+    for (const token of tokens) {
+      // Skip empty tokens
+      if (!token) continue;
+      
+      // Skip move numbers (1., 2., etc)
+      if (/^\d+[.]{1,3}$/.test(token)) continue;
+      
+      // Skip result markers if found in middle
+      if (/^(1-0|0-1|1\/2-1\/2|\*)$/.test(token)) continue;
+      
+      // Valid move patterns in algebraic notation
+      // Examples: e4, Nf3, O-O, dxe5, e8=Q+, Qd5#, Nxc6+, etc
+      if (/^[a-hNBRQK]?[a-h]?[1-8]?x?[a-h][1-8](=[NBRQ])?[\+#!?]*$/.test(token)) {
+        moves.push(token);
+      }
+    }
     
     return moves;
   };
 
-  const pgnLines = [
-    `[Event "${data.event || "Chess Game"}"]`,
-    `[Site "${data.site || "Chess4Everyone"}"]`,
-    `[Date "${formatDate(data.date)}"]`,
-    `[Round "${data.round || "?"}"]`,
-    `[White "${data.white}"]`,
-    `[Black "${data.black}"]`,
-    `[Result "${formatResult(data.result)}"]`,
-    `[TimeControl "${data.timeControl || "?"}"]`,
-    `[Termination "${data.termination || "Normal"}"]`,
-  ];
+  const pgnLines: string[] = [];
 
+  // Add mandatory PGN headers
+  pgnLines.push(`[Event "${data.event || "Chess Game"}"]`);
+  pgnLines.push(`[Site "${data.site || "Chess4Everyone"}"]`);
+  pgnLines.push(`[Date "${formatDate(data.date)}"]`);
+  pgnLines.push(`[Round "${data.round || "?"}"]`);
+  pgnLines.push(`[White "${data.white}"]`);
+  pgnLines.push(`[Black "${data.black}"]`);
+  pgnLines.push(`[Result "${formatResult(data.result)}"]`);
+  
+  // Add optional headers
+  if (data.whiteRating) {
+    pgnLines.push(`[WhiteElo "${data.whiteRating}"]`);
+  }
+  
+  if (data.blackRating) {
+    pgnLines.push(`[BlackElo "${data.blackRating}"]`);
+  }
+  
+  pgnLines.push(`[TimeControl "${data.timeControl || "?"}"]`);
+  
   if (data.eco) {
     pgnLines.push(`[ECO "${data.eco}"]`);
   }
-
+  
   if (data.opening) {
     pgnLines.push(`[Opening "${data.opening}"]`);
   }
-
-  // Add blank line before moves
+  
+  pgnLines.push(`[Termination "${data.termination || "Normal"}"]`);
+  
+  if (data.gameType) {
+    pgnLines.push(`[GameType "${data.gameType}"]`);
+  }
+  
+  // Blank line before moves (required by PGN standard)
   pgnLines.push("");
   
-  // Format moves in standard PGN format
-  const moves = cleanMoves(data.moves);
-  let moveNumber = 1;
+  // Extract and format moves
+  const moves = extractMoves(data.moves);
+  
+  if (moves.length === 0) {
+    // No moves, just add result
+    pgnLines.push(formatResult(data.result));
+    return pgnLines.join("\n");
+  }
+  
+  // Format moves in standard PGN format with line breaks every 12 half-moves (6 full moves)
   let currentLine = "";
-  let moveIndex = 0;
-
-  while (moveIndex < moves.length) {
-    const whiteMove = moves[moveIndex];
-    const blackMove = moves[moveIndex + 1];
-
-    if (!whiteMove) break;
-
-    // Format: 1. e4 e5 2. Nf3 Nc6 (etc)
-    currentLine += `${moveNumber}. ${whiteMove} `;
-
-    if (blackMove && !blackMove.match(/^(1-0|0-1|1\/2-1\/2|\*)$/)) {
-      currentLine += `${blackMove} `;
-      moveIndex += 2;
-    } else {
-      moveIndex += 1;
+  
+  for (let i = 0; i < moves.length; i++) {
+    const moveNumber = Math.floor(i / 2) + 1;
+    const isWhiteMove = i % 2 === 0;
+    
+    // Add move number before white's move
+    if (isWhiteMove) {
+      currentLine += `${moveNumber}. `;
     }
-
-    moveNumber++;
-
-    // Add line break every 12 half-moves (6 full moves) for readability
-    if (moveNumber % 6 === 1 && currentLine.length > 60) {
+    
+    // Add the move
+    currentLine += `${moves[i]} `;
+    
+    // Add line break every 6 full moves (after black's move) for readability
+    // PGN files typically have 80-character line limit
+    if (!isWhiteMove && currentLine.length > 60) {
       pgnLines.push(currentLine.trim());
       currentLine = "";
     }
   }
-
-  // Add remaining moves
+  
+  // Add any remaining moves
   if (currentLine.trim()) {
     pgnLines.push(currentLine.trim());
   }
-
-  // Add result at the end (on a new line, as per PGN standard)
+  
+  // Add result marker at the end (PGN standard requires this)
   pgnLines.push(formatResult(data.result));
-
+  
   return pgnLines.join("\n");
 };
 

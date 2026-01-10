@@ -330,12 +330,12 @@ const GameHistoryPage: React.FC = () => {
                           <div
                             className="gh-accuracy-fill"
                             style={{
-                              width: `${selectedAnalysis.whiteAccuracy}%`,
+                              width: `${selectedAnalysis.whiteAccuracy ?? 0}%`,
                             }}
                           />
                         </div>
                         <div className="gh-accuracy-value">
-                          {selectedAnalysis.whiteAccuracy.toFixed(1)}%
+                          {(selectedAnalysis.whiteAccuracy ?? 0).toFixed(1)}%
                         </div>
                       </div>
 
@@ -345,12 +345,12 @@ const GameHistoryPage: React.FC = () => {
                           <div
                             className="gh-accuracy-fill"
                             style={{
-                              width: `${selectedAnalysis.blackAccuracy}%`,
+                              width: `${selectedAnalysis.blackAccuracy ?? 0}%`,
                             }}
                           />
                         </div>
                         <div className="gh-accuracy-value">
-                          {selectedAnalysis.blackAccuracy.toFixed(1)}%
+                          {(selectedAnalysis.blackAccuracy ?? 0).toFixed(1)}%
                         </div>
                       </div>
                     </div>

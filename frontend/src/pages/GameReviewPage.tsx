@@ -11,9 +11,17 @@ interface MoveAnalysisData {
   moveIndex: number;
   san: string;
   evaluation: number;
+  evaluationBefore: number;
+  evaluationAfter: number;
   bestMove: string;
+  moveClass: string;
   isMistake: boolean;
   isBlunder: boolean;
+  isBrilliant: boolean;
+  isExcellent: boolean;
+  isGood: boolean;
+  isOk: boolean;
+  isInaccuracy: boolean;
 }
 
 const GameReviewPage: React.FC = () => {
@@ -27,6 +35,7 @@ const GameReviewPage: React.FC = () => {
   const [fen, setFen] = useState("");
   const [boardWidth, setBoardWidth] = useState(480);
   const [moveAnalysisList, setMoveAnalysisList] = useState<MoveAnalysisData[]>([]);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     if (gameId) {
@@ -54,42 +63,70 @@ const GameReviewPage: React.FC = () => {
 
   const loadGameData = async (id: number) => {
     setLoading(true);
+    setError(null);
     try {
+      console.log("📖 Loading game data for game ID:", id);
       const detail = await gameService.getGameDetail(id);
+      console.log("✅ Game detail loaded:", detail);
+      
+      if (!detail) {
+        console.error("❌ Game detail is null");
+        setError("Failed to load game data");
+        setLoading(false);
+        return;
+      }
+      
       setGameDetail(detail);
 
       // Parse moves from JSON
       if (detail.movesJson) {
         try {
+          console.log("📝 Parsing moves from JSON...");
           const moves = JSON.parse(detail.movesJson);
+          console.log("✅ Successfully parsed moves:", moves.length, "moves");
           // Reconstruct the game to get initial FEN
           const game = new Chess();
           if (moves.length > 0) {
             setFen(game.fen());
           }
         } catch (e) {
-          console.error("Failed to parse moves:", e);
+          console.error("❌ Failed to parse moves JSON:", e);
+          console.error("   Moves JSON:", detail.movesJson?.substring(0, 200));
+          setError("Failed to parse game moves");
         }
+      } else {
+        console.warn("⚠️ No movesJson in game detail");
+        setError("Game has no moves data");
       }
 
       // Load analysis
       try {
+        console.log("🔍 Loading analysis for game...");
         const analysisData = await gameService.getGameAnalysis(id);
-        setAnalysis(analysisData);
+        console.log("✅ Analysis loaded:", analysisData);
+        
+        // Check if analysis is valid (not a processing/error response)
+        if (analysisData && 'whiteAccuracy' in analysisData) {
+          setAnalysis(analysisData);
 
-        if (analysisData.movesAnalysis) {
-          try {
-            const moves = JSON.parse(analysisData.movesAnalysis);
-            setMoveAnalysisList(moves);
-          } catch (e) {
-            console.error("Failed to parse move analysis:", e);
+          if (analysisData.movesAnalysis) {
+            try {
+              const moves = JSON.parse(analysisData.movesAnalysis);
+              console.log("✅ Parsed move analysis:", moves.length, "moves");
+              setMoveAnalysisList(moves);
+            } catch (e) {
+              console.error("❌ Failed to parse move analysis:", e);
+            }
           }
+        } else {
+          console.log("ℹ️ Analysis still processing:", analysisData);
         }
       } catch (e) {
-        console.log("Analysis not available yet");
+        console.log("ℹ️ Analysis not available yet:", e);
       }
     } catch (error) {
-      console.error("Failed to load game:", error);
+      console.error("❌ Failed to load game:", error);
+      setError(`Error loading game: ${error instanceof Error ? error.message : 'Unknown error'}`);
     } finally {
       setLoading(false);
     }
@@ -111,6 +148,21 @@ const GameReviewPage: React.FC = () => {
       console.error("Error getting position:", e);
       return "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
     }
+  };
+
+  const getEvalBarWidth = (evaluation: number): number => {
+    // Convert evaluation to percentage (0-100)
+    // White advantage = higher %, Black advantage = lower %
+    // Clamped between 0-100, with 50 being equal
+    const width = 50 + Math.min(Math.max(evaluation * 10, -50), 50);
+    return Math.max(0, Math.min(100, width));
+  };
+
+  const formatEvaluation = (evaluation: number): string => {
+    if (Math.abs(evaluation) >= 10) {
+      return evaluation > 0 ? "+M" : "#M"; // Mate
+    }
+    return `${evaluation > 0 ? "+" : ""}${evaluation.toFixed(2)}`;
   };
 
   const handlePreviousMove = () => {
@@ -138,6 +190,20 @@ const GameReviewPage: React.FC = () => {
         <Navbar rating={1847} streak={5} />
         <div className="gr-page loading-page">
           <div className="gr-loading">⏳ Loading game review...</div>
+        </div>
+      </>
+    );
+  }
+
+  if (error) {
+    return (
+      <>
+        <Navbar rating={1847} streak={5} />
+        <div className="gr-page error-page">
+          <div className="gr-error">❌ {error}</div>
+          <button className="gr-back-btn" onClick={() => navigate("/game-history")}>
+            Back to Games
+          </button>
         </div>
       </>
     );
@@ -262,33 +328,106 @@ const GameReviewPage: React.FC = () => {
             {/* Move Analysis */}
             {currentAnalysis && (
               <div className="gr-move-analysis-card">
-                <h2>Current Move Analysis</h2>
+                <h2>Move Analysis</h2>
                 <div className="gr-analysis-content">
-                  <div className="gr-move-info">
-                    <div className="gr-move-main">
+                  {/* Move with classification */}
+                  <div className="gr-move-header">
+                    <div className="gr-move-notation">
+                      <span className="gr-move-number">
+                        {currentAnalysis.moveNumber}
+                        {currentAnalysis.moveIndex % 2 === 0 ? "." : "..."}
+                      </span>
                       <span className="gr-move-san">{currentAnalysis.san}</span>
-                      {currentAnalysis.isBlunder && (
-                        <span className="gr-badge blunder">⚠️ Blunder</span>
+                    </div>
+                    <div className="gr-move-classification">
+                      {currentAnalysis.isBrilliant && (
+                        <span className="gr-badge brilliant">♦ Brilliant</span>
                       )}
-                      {currentAnalysis.isMistake && !currentAnalysis.isBlunder && (
+                      {currentAnalysis.isExcellent && !currentAnalysis.isBrilliant && (
+                        <span className="gr-badge excellent">✓ Excellent</span>
+                      )}
+                      {currentAnalysis.isGood && !currentAnalysis.isExcellent && (
+                        <span className="gr-badge good">✓ Good</span>
+                      )}
+                      {currentAnalysis.isOk && !currentAnalysis.isGood && (
+                        <span className="gr-badge ok">• OK</span>
+                      )}
+                      {currentAnalysis.isInaccuracy && (
+                        <span className="gr-badge inaccuracy">⚠ Inaccuracy</span>
+                      )}
+                      {currentAnalysis.isMistake && !currentAnalysis.isInaccuracy && (
                         <span className="gr-badge mistake">⚡ Mistake</span>
+                      )}
+                      {currentAnalysis.isBlunder && !currentAnalysis.isMistake && (
+                        <span className="gr-badge blunder">✕ Blunder</span>
                       )}
                     </div>
                   </div>
 
-                  <div className="gr-evaluation">
-                    <div className="gr-eval-label">Evaluation</div>
-                    <div className="gr-eval-bar">
-                      <div className="gr-eval-indicator">
-                        {currentAnalysis.evaluation > 0
-                          ? `+${currentAnalysis.evaluation.toFixed(2)}`
-                          : currentAnalysis.evaluation.toFixed(2)}
+                  {/* Evaluation bar - Chess.com style */}
+                  <div className="gr-evaluation-section">
+                    <div className="gr-eval-before-after">
+                      <div className="gr-eval-item">
+                        <span className="gr-eval-label">Before Move</span>
+                        <span className="gr-eval-number">
+                          {currentAnalysis.evaluationBefore > 0 ? "+" : ""}
+                          {currentAnalysis.evaluationBefore.toFixed(2)}
+                        </span>
+                      </div>
+                      <div className="gr-eval-arrow">→</div>
+                      <div className="gr-eval-item">
+                        <span className="gr-eval-label">After Move</span>
+                        <span className="gr-eval-number">
+                          {currentAnalysis.evaluationAfter > 0 ? "+" : ""}
+                          {currentAnalysis.evaluationAfter.toFixed(2)}
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* Real-time evaluation bar */}
+                    <div className="gr-eval-bar-container">
+                      <div className="gr-eval-bar-label">Evaluation</div>
+                      <div className="gr-eval-bar">
+                        <div
+                          className="gr-eval-white"
+                          style={{
+                            width: `${getEvalBarWidth(
+                              currentAnalysis.evaluationAfter
+                            )}%`,
+                          }}
+                        />
+                      </div>
+                      <div className="gr-eval-bar-value">
+                        {formatEvaluation(currentAnalysis.evaluationAfter)}
                       </div>
                     </div>
                   </div>
 
+                  {/* Evaluation delta */}
+                  <div className="gr-eval-delta">
+                    <span className="gr-delta-label">Position Change</span>
+                    <span
+                      className={`gr-delta-value ${
+                        currentAnalysis.evaluationAfter >
+                        currentAnalysis.evaluationBefore
+                          ? "positive"
+                          : "negative"
+                      }`}
+                    >
+                      {currentAnalysis.evaluationAfter >
+                      currentAnalysis.evaluationBefore
+                        ? "+"
+                        : ""}
+                      {(
+                        currentAnalysis.evaluationAfter -
+                        currentAnalysis.evaluationBefore
+                      ).toFixed(2)}
+                    </span>
+                  </div>
+
+                  {/* Best move suggestion */}
                   {currentAnalysis.bestMove && (
-                    <div className="gr-best-move">
+                    <div className="gr-best-move-section">
                       <div className="gr-best-move-label">Best Move</div>
                       <div className="gr-best-move-value">
                         {currentAnalysis.bestMove}
@@ -309,11 +448,11 @@ const GameReviewPage: React.FC = () => {
                     <div className="gr-stat-bar">
                       <div
                         className="gr-stat-fill"
-                        style={{ width: `${analysis.whiteAccuracy}%` }}
+                        style={{ width: `${analysis.whiteAccuracy ?? 0}%` }}
                       />
                     </div>
                     <div className="gr-stat-value">
-                      {analysis.whiteAccuracy.toFixed(1)}%
+                      {(analysis.whiteAccuracy ?? 0).toFixed(1)}%
                     </div>
                   </div>
 
@@ -322,11 +461,11 @@ const GameReviewPage: React.FC = () => {
                     <div className="gr-stat-bar">
                       <div
                         className="gr-stat-fill"
-                        style={{ width: `${analysis.blackAccuracy}%` }}
+                        style={{ width: `${analysis.blackAccuracy ?? 0}%` }}
                       />
                     </div>
                     <div className="gr-stat-value">
-                      {analysis.blackAccuracy.toFixed(1)}%
+                      {(analysis.blackAccuracy ?? 0).toFixed(1)}%
                     </div>
                   </div>
 
