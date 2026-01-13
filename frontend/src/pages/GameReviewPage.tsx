@@ -22,6 +22,7 @@ interface MoveAnalysisData {
   isGood: boolean;
   isOk: boolean;
   isInaccuracy: boolean;
+  quality?: string;
 }
 
 const GameReviewPage: React.FC = () => {

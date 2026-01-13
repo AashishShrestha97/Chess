@@ -14,7 +14,6 @@ import "./App.css";
 import VoiceGamePage from "./pages/VoiceGamePage";
 import StandardChessPage from "./pages/StandardChessPage";
 import SettingsPage from "./pages/SettingsPage";
-import ProfilePage from "./pages/ProfilePage";
 
 const App: React.FC = () => {
   return (
@@ -27,7 +26,6 @@ const App: React.FC = () => {
         <Route path="/voicechess" element={<VoiceGamePage />} />
         <Route path="/classicchess" element={<StandardChessPage />} />
         <Route path="/settings" element={<SettingsPage />} />
-        <Route path="/profile" element={<ProfilePage />} />
         <Route path="/game-history" element={<GameHistoryPage />} />
 <Route path="/game-review/:gameId" element={<GameReviewPage />} />
       </Routes>
