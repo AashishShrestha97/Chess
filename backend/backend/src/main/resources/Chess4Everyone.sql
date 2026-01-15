@@ -7,6 +7,64 @@ CREATE TABLE IF NOT EXISTS roles (
 );
 INSERT IGNORE INTO roles(name) VALUES ('ROLE_USER'), ('ROLE_ADMIN');
 
+-- Game modes table - different chess time controls and game types
+CREATE TABLE IF NOT EXISTS game_modes (
+  id BIGINT PRIMARY KEY AUTO_INCREMENT,
+  name VARCHAR(50) NOT NULL UNIQUE,
+  display_name VARCHAR(100) NOT NULL,
+  description VARCHAR(255),
+  min_time_minutes INT NOT NULL,
+  max_time_minutes INT NOT NULL,
+  increment_seconds INT NOT NULL DEFAULT 0,
+  icon VARCHAR(50),
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Insert default game modes
+INSERT IGNORE INTO game_modes (name, display_name, description, min_time_minutes, max_time_minutes, increment_seconds, icon) VALUES
+('BULLET', 'Bullet', 'Games with 1-2 minutes time control', 1, 2, 0, '⚡'),
+('BLITZ', 'Blitz', 'Games with 3-5 minutes time control', 3, 5, 0, '🔥'),
+('RAPID', 'Rapid', 'Games with 10-25 minutes time control', 10, 25, 0, '⚔️'),
+('CLASSICAL', 'Classical', 'Games with 30+ minutes time control', 30, 999, 0, '👑'),
+('BULLET_INC', 'Bullet +', 'Bullet games with increment', 1, 2, 1, '⚡➕'),
+('BLITZ_INC', 'Blitz +', 'Blitz games with increment', 3, 5, 2, '🔥➕'),
+('RAPID_INC', 'Rapid +', 'Rapid games with increment', 10, 25, 5, '⚔️➕'),
+('CLASSICAL_INC', 'Classical +', 'Classical games with increment', 30, 999, 10, '👑➕');
+
+-- Voice commands table - admin-controllable voice commands for chess
+CREATE TABLE IF NOT EXISTS voice_commands (
+  id BIGINT PRIMARY KEY AUTO_INCREMENT,
+  command_name VARCHAR(100) NOT NULL UNIQUE,
+  patterns LONGTEXT NOT NULL,
+  intent VARCHAR(50) NOT NULL,
+  description TEXT,
+  active TINYINT(1) NOT NULL DEFAULT 1,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+);
+
+-- Insert default voice commands - extracted from globalVoiceParser
+INSERT IGNORE INTO voice_commands (command_name, patterns, intent, description, active) VALUES
+('knight', '["night","nite","bite","naight","nait","knite","neit","nyte"]', 'PIECE', 'Knight piece command', 1),
+('queen', '["kween","quin","kwin","quine","qeen","kiwin","qween","kwon"]', 'PIECE', 'Queen piece command', 1),
+('king', '["kink","keen","keeng","keng","kang","kyng","kiing"]', 'PIECE', 'King piece command', 1),
+('rook', '["rock","brook","ruk","ruke","rok","ruck","roak","rouk"]', 'PIECE', 'Rook piece command', 1),
+('bishop', '["bisop","biship","bishap","bisap","bish","bishup","bisup"]', 'PIECE', 'Bishop piece command', 1),
+('pawn', '["pond","paun","pwn","pon","pown","paan","pan","porn"]', 'PIECE', 'Pawn piece command', 1),
+('takes', '["take","tek","teyk","capture","captures","catch","ketch","teks"]', 'ACTION', 'Capture/take piece action', 1),
+('to', '["too","two","tu","toh","tuh","toward","towards","into"]', 'DIRECTION', 'Move direction preposition', 1),
+('bullet', '["bulit","bullit","bulet","bullett","bullitt","bulent"]', 'TIME_CONTROL', 'Bullet time control', 1),
+('blitz', '["blits","bleetz","blets","blitzs","blitx","bliz"]', 'TIME_CONTROL', 'Blitz time control', 1),
+('rapid', '["repid","rapeed","raped","rappid","rapyd","repeed"]', 'TIME_CONTROL', 'Rapid time control', 1),
+('classical', '["classicle","klasikal","classic","classik","clasical","klassical"]', 'TIME_CONTROL', 'Classical time control', 1),
+('castle', '["kastle","casel","kasel","castles","kassle"]', 'ACTION', 'Castling move', 1),
+('kingside', '["kingsaid","king_side","kingsite","kingsyde","short"]', 'DIRECTION', 'King side direction', 1),
+('queenside', '["queensaid","queen_side","queensite","queensyde","long"]', 'DIRECTION', 'Queen side direction', 1),
+('play', '["plai","pley","plei","playing","playe"]', 'GAME_CONTROL', 'Start playing command', 1),
+('start', '["strat","sart","sturt","starting","startt"]', 'GAME_CONTROL', 'Start game command', 1),
+('random', '["rendom","randum","rondom","randome","randem"]', 'GAME_CONTROL', 'Random selection command', 1),
+('friend', '["frend","frand","frient"]', 'OPPONENT_TYPE', 'Friend opponent selection', 1);
+
 CREATE TABLE IF NOT EXISTS users (
   id BIGINT PRIMARY KEY AUTO_INCREMENT,
   name VARCHAR(120) NOT NULL,
@@ -86,13 +144,15 @@ CREATE TABLE IF NOT EXISTS games (
   time_control VARCHAR(20),
   opening_name VARCHAR(255),
   game_type VARCHAR(50),
+  game_mode_id BIGINT,
   termination_reason VARCHAR(100),
   move_count INT DEFAULT 0,
   total_time_white_ms BIGINT DEFAULT 0,
   total_time_black_ms BIGINT DEFAULT 0,
   CONSTRAINT fk_game_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
   CONSTRAINT fk_game_white_player FOREIGN KEY (white_player_id) REFERENCES users(id) ON DELETE SET NULL,
-  CONSTRAINT fk_game_black_player FOREIGN KEY (black_player_id) REFERENCES users(id) ON DELETE SET NULL
+  CONSTRAINT fk_game_black_player FOREIGN KEY (black_player_id) REFERENCES users(id) ON DELETE SET NULL,
+  CONSTRAINT fk_game_mode FOREIGN KEY (game_mode_id) REFERENCES game_modes(id) ON DELETE SET NULL
 );
 
 -- Game analysis table - stores analysis results for games

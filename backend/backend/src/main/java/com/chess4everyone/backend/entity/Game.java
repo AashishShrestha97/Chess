@@ -86,6 +86,10 @@ public class Game {
     @Column(name = "game_type")
     private String gameType; // "STANDARD", "VOICE", "RAPID", etc.
     
+    @ManyToOne
+    @JoinColumn(name = "game_mode_id")
+    private GameMode gameMode; // Reference to game mode (BULLET, BLITZ, RAPID, CLASSICAL)
+    
     @Column(name = "termination_reason")
     private String terminationReason; // "CHECKMATE", "RESIGNATION", "TIMEOUT", "STALEMATE", etc.
     

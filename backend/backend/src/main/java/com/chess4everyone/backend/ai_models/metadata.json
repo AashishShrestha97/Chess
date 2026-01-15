@@ -1,0 +1,119 @@
+{
+  "model_type": "xgboost",
+  "feature_names": [
+    "avg_cp_loss_opening",
+    "avg_cp_loss_middlegame",
+    "avg_cp_loss_endgame",
+    "avg_cp_loss_overall",
+    "blunder_rate_opening",
+    "blunder_rate_middlegame",
+    "blunder_rate_endgame",
+    "blunder_rate_overall",
+    "tactical_error_rate",
+    "positional_drift",
+    "positional_error_rate",
+    "time_pressure_blunder_rate",
+    "avg_cp_loss_time_pressure",
+    "conversion_error_rate",
+    "defensive_blunder_rate",
+    "total_games",
+    "total_moves",
+    "avg_moves_per_game"
+  ],
+  "categories": [
+    "opening",
+    "middlegame",
+    "endgame",
+    "tactical",
+    "positional",
+    "time_management"
+  ],
+  "thresholds": {
+    "opening": {
+      "avg_cp_loss_opening": {
+        "strong": 63.635000000000005,
+        "weak": 161.34277472527472,
+        "mean": 139.29599051973713,
+        "median": 81.99484536082474
+      },
+      "blunder_rate_opening": {
+        "strong": 0.06341836734693877,
+        "weak": 0.12941489361702127,
+        "mean": 0.10346377315496472,
+        "median": 0.09
+      }
+    },
+    "middlegame": {
+      "avg_cp_loss_middlegame": {
+        "strong": 387.96688034188037,
+        "weak": 741.4066176470587,
+        "mean": 580.6126540788284,
+        "median": 572.1688753269399
+      },
+      "blunder_rate_middlegame": {
+        "strong": 0.2260894495412844,
+        "weak": 0.28633575499195196,
+        "mean": 0.26289311603035814,
+        "median": 0.25478017293874067
+      }
+    },
+    "endgame": {
+      "avg_cp_loss_endgame": {
+        "strong": 435.5869565217391,
+        "weak": 1007.6869967793881,
+        "mean": 886.5199767906,
+        "median": 764.0404761904762
+      },
+      "blunder_rate_endgame": {
+        "strong": 0.1501984126984127,
+        "weak": 0.26714046822742477,
+        "mean": 0.2110643372287914,
+        "median": 0.19355249745158004
+      }
+    },
+    "tactical": {
+      "tactical_error_rate": {
+        "strong": 0.27264106211474637,
+        "weak": 0.3435354298269706,
+        "mean": 0.30845616890382216,
+        "median": 0.3025210084033613
+      },
+      "blunder_rate_overall": {
+        "strong": 0.1644110008940355,
+        "weak": 0.2248397435897436,
+        "mean": 0.19800009112139896,
+        "median": 0.19266635056108738
+      }
+    },
+    "positional": {
+      "positional_drift": {
+        "strong": 50.26346153846154,
+        "weak": 53.68242872807018,
+        "mean": 52.069945834326106,
+        "median": 52.117045454545455
+      },
+      "positional_error_rate": {
+        "strong": 0.23106364590406814,
+        "weak": 0.26463930860132867,
+        "mean": 0.24943548570321436,
+        "median": 0.2447345326897762
+      }
+    },
+    "time_management": {
+      "time_pressure_blunder_rate": {
+        "strong": 0.1828366715518645,
+        "weak": 0.2759282970550576,
+        "mean": 0.24009618464274016,
+        "median": 0.21899318332629547
+      },
+      "avg_cp_loss_time_pressure": {
+        "strong": 288.2545285940651,
+        "weak": 713.3459498553519,
+        "mean": 897.1926969270469,
+        "median": 563.8896037461143
+      }
+    }
+  },
+  "strong_percentile": 0.25,
+  "weak_percentile": 0.75
+}

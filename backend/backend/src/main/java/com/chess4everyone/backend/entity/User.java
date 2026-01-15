@@ -36,7 +36,8 @@ public class User {
     @Column(unique = true)   
     private String email;
     
-    @Column(unique = true)   
+    // Phone is optional and nullable - removed unique constraint to allow multiple null values
+    @Column(nullable = true)   
     private String phone;
     
     private String password;

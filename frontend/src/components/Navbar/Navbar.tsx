@@ -38,6 +38,10 @@ const Navbar: React.FC<NavbarProps> = ({ rating, streak }) => {
               <span className="nav-icon">🏠</span>
               Home
             </a>
+            <a href="/profile" className="nav-link">
+              <span className="nav-icon">👤</span>
+              Profile
+            </a>
             <a href="/rankings" className="nav-link">
               <span className="nav-icon">🏆</span>
               Rankings
