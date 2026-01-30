@@ -12,11 +12,14 @@ import com.chess4everyone.backend.dto.UpdateProfileRequest;
 import com.chess4everyone.backend.dto.UserGamesAnalysisDto;
 import com.chess4everyone.backend.dto.UserResponse;
 import com.chess4everyone.backend.dto.GameModeStatisticsDto;
+import com.chess4everyone.backend.dto.MLAnalysisResponse;
 import com.chess4everyone.backend.entity.User;
 import com.chess4everyone.backend.entity.GameMode;
 import com.chess4everyone.backend.repo.UserRepository;
 import com.chess4everyone.backend.security.JwtService;
 import com.chess4everyone.backend.service.GameAnalysisService;
+import com.chess4everyone.backend.service.ChessMLAnalysisService;
+import com.chess4everyone.backend.service.ChessGameService;
 import com.chess4everyone.backend.service.GameModeService;
 import com.chess4everyone.backend.repository.GameRepository;
 
@@ -24,6 +27,8 @@ import jakarta.servlet.http.Cookie;
 import jakarta.servlet.http.HttpServletRequest;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+
+import java.util.Map;
 
 @Slf4j
 @RequiredArgsConstructor
@@ -34,6 +39,8 @@ public class ProfileController {
     private final UserRepository userRepo;
     private final JwtService jwtService;
     private final GameAnalysisService gameAnalysisService;
+    private final ChessMLAnalysisService chessMLAnalysisService;  // NEW: ML microservice
+    private final ChessGameService chessGameService;  // NEW: Game fetching service
     private final GameModeService gameModeService;
     private final GameRepository gameRepository;
 
@@ -179,11 +186,72 @@ public class ProfileController {
 
     /**
      * Update user's analysis with latest games
-     * Analyzes 10 most recent games using AI models
+     * Calls Python ML API to analyze 10 most recent games using trained ML models
      * Requires at least 10 games to be played
+     * 
+     * Architecture: Frontend → Spring Boot → Python ML Server
      */
     @PostMapping("/update-analysis")
     public ResponseEntity<?> updateAnalysis(HttpServletRequest req) {
+        Long userId = getUserIdFromRequest(req);
+        if (userId == null) {
+            log.warn("⚠️ Unauthorized update-analysis request");
+            return ResponseEntity.status(401).body("Unauthorized");
+        }
+
+        try {
+            User user = userRepo.findById(userId)
+                    .orElseThrow(() -> new RuntimeException("User not found"));
+            
+            log.info("📊 Analysis request for user: {} ({})", userId, user.getName());
+            
+            // Check if user has enough games for analysis
+            long gameCount = chessGameService.countGamesWithPGN(user);
+            if (gameCount < 10) {
+                log.warn("⚠️ User {} has only {} games, need at least 10", userId, gameCount);
+                return ResponseEntity.status(400)
+                    .body("Need at least 10 games for analysis. You have " + gameCount);
+            }
+            
+            // Call ML microservice to analyze player
+            log.info("🔗 Calling ML microservice for analysis...");
+            MLAnalysisResponse mlAnalysis = chessMLAnalysisService.analyzePlayer(
+                user,
+                user.getName(),  // Use user's name as player name
+                10  // Analyze 10 most recent games
+            );
+            
+            if (mlAnalysis == null) {
+                log.error("❌ ML service returned null response");
+                return ResponseEntity.status(500).body("ML analysis returned empty response");
+            }
+            
+            log.info("✅ ML analysis completed successfully");
+            log.info("   Games analyzed: {}", mlAnalysis.getGamesAnalyzed());
+            log.info("   Strengths: {}", mlAnalysis.getStrengths().size());
+            log.info("   Weaknesses: {}", mlAnalysis.getWeaknesses().size());
+            
+            // TODO: Cache the analysis results in PlayerAnalysis table for future retrieval
+            // playerAnalysisRepository.save(playerAnalysis);
+            
+            // Return the ML analysis response directly to frontend
+            return ResponseEntity.ok(mlAnalysis);
+            
+        } catch (IllegalArgumentException e) {
+            log.warn("⚠️ Invalid analysis request: {}", e.getMessage());
+            return ResponseEntity.status(400).body(e.getMessage());
+        } catch (Exception e) {
+            log.error("❌ Error updating analysis: {}", e.getMessage(), e);
+            return ResponseEntity.status(500).body("Error updating analysis: " + e.getMessage());
+        }
+    }
+
+    /**
+     * Diagnostic endpoint to check game PGN data
+     * /api/profile/debug/games-pgn
+     */
+    @GetMapping("/debug/games-pgn")
+    public ResponseEntity<?> debugGamesPGN(HttpServletRequest req) {
         Long userId = getUserIdFromRequest(req);
         if (userId == null) {
             return ResponseEntity.status(401).body("Unauthorized");
@@ -193,13 +261,28 @@ public class ProfileController {
             User user = userRepo.findById(userId)
                     .orElseThrow(() -> new RuntimeException("User not found"));
             
-            UserGamesAnalysisDto analysis = gameAnalysisService.updatePlayerAnalysis(user);
-            return ResponseEntity.ok(analysis);
-        } catch (IllegalArgumentException e) {
-            return ResponseEntity.status(400).body(e.getMessage());
+            var games = chessGameService.getRecentGamesForML(user, 3);
+            
+            var result = new java.util.HashMap<String, Object>();
+            result.put("total_games_in_db", chessGameService.countGamesWithPGN(user));
+            result.put("games_returned", games.size());
+            
+            var gamesList = new java.util.ArrayList<Map<String, Object>>();
+            for (int i = 0; i < games.size(); i++) {
+                var gameMap = new java.util.HashMap<String, Object>();
+                String pgn = games.get(i).getPgn();
+                gameMap.put("index", i + 1);
+                gameMap.put("pgn_length", pgn != null ? pgn.length() : 0);
+                gameMap.put("pgn_first_100_chars", pgn != null && pgn.length() > 100 ? pgn.substring(0, 100) : pgn);
+                gameMap.put("pgn_full", pgn);
+                gamesList.add(gameMap);
+            }
+            result.put("games", gamesList);
+            
+            return ResponseEntity.ok(result);
         } catch (Exception e) {
-            log.error("Error updating analysis: ", e);
-            return ResponseEntity.status(500).body("Error updating analysis");
+            log.error("❌ Error getting game PGN: {}", e.getMessage(), e);
+            return ResponseEntity.status(500).body("Error: " + e.getMessage());
         }
     }
 

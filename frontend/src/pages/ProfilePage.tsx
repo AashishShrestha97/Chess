@@ -149,10 +149,18 @@ const ProfilePage: React.FC = () => {
       setTimeout(() => setSuccessMessage(null), 5000);
     } catch (err: any) {
       console.error("Error updating analysis:", err);
-      setError(
-        err.response?.data?.message ||
-          "Failed to update analysis. Please try again."
-      );
+      
+      // Handle timeout errors specifically
+      if (err.code === "ECONNABORTED" || err.message?.includes("timeout")) {
+        setError(
+          "Analysis is taking longer than expected. This can happen on first analysis or with many games. Please try again in a moment."
+        );
+      } else {
+        setError(
+          err.response?.data?.message ||
+            "Failed to update analysis. Please try again."
+        );
+      }
     } finally {
       setLoadingAnalysis(false);
     }
@@ -449,10 +457,12 @@ const ProfilePage: React.FC = () => {
                 title={
                   !hasEnoughGames
                     ? `Play ${10 - profileData.totalGames} more games to enable analysis`
+                    : loadingAnalysis
+                    ? "Analysis in progress... This may take up to 2 minutes"
                     : "Update analysis with latest games"
                 }
               >
-                <FiRefreshCw /> {loadingAnalysis ? "Analyzing..." : "Update Analysis"}
+                <FiRefreshCw /> {loadingAnalysis ? "Analyzing... (May take up to 2 min)" : "Update Analysis"}
               </button>
             </div>
 

@@ -1,4 +1,4 @@
-import http from "./http";
+import http, { httpLongRunning } from "./http";
 
 export interface UserInfo {
   id: number;
@@ -86,9 +86,10 @@ export async function getUserGamesAnalysis() {
 /**
  * Update user's analysis with latest games
  * Triggers AI model analysis on 10 most recent games
+ * Uses long timeout (2 minutes) as analysis can take time
  */
 export async function updateUserAnalysis() {
-  return http.post<UserGamesAnalysisResponse>("/api/profile/update-analysis", {});
+  return httpLongRunning.post<UserGamesAnalysisResponse>("/api/profile/update-analysis", {});
 }
 
 /**

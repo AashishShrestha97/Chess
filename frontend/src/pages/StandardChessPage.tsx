@@ -282,9 +282,11 @@ const StandardChessPage: React.FC<StandardChessPageProps> = ({
         }
         return newCaptured;
       });
-      playSound("capture");
+      // Sounds disabled for standard chess - only enabled in voice game
+      // playSound("capture");
     } else {
-      playSound("move");
+      // Sounds disabled for standard chess - only enabled in voice game
+      // playSound("move");
     }
 
     // Start the clock on first move
@@ -311,7 +313,8 @@ const StandardChessPage: React.FC<StandardChessPageProps> = ({
       gameOverRef.current = true;
       setWinner(winColor);
       setStatusMessage(msg);
-      playSound("gameEnd");
+      // Sounds disabled for standard chess - only enabled in voice game
+      // playSound("gameEnd");
     } else if (game.isDraw()) {
       let msg = "Game drawn";
       if (game.isStalemate()) {
@@ -325,10 +328,12 @@ const StandardChessPage: React.FC<StandardChessPageProps> = ({
       gameOverRef.current = true;
       setWinner(null);
       setStatusMessage(msg);
-      playSound("gameEnd");
+      // Sounds disabled for standard chess - only enabled in voice game
+      // playSound("gameEnd");
     } else if (game.isCheck()) {
       setStatusMessage("Check!");
-      playSound("check");
+      // Sounds disabled for standard chess - only enabled in voice game
+      // playSound("check");
     } else {
       setStatusMessage(sideToMove === "w" ? "White to move" : "Black to move");
     }

@@ -49,6 +49,10 @@ public class PlayerAnalysis {
     @Column(name = "metrics", columnDefinition = "JSON")
     private String metrics; // JSON object of various metrics
     
+    @Lob
+    @Column(name = "predictions", columnDefinition = "JSON")
+    private String predictions; // JSON object with category predictions (opening, middlegame, etc.)
+    
     @Column(name = "games_analyzed")
     private Integer gamesAnalyzed = 0;
     

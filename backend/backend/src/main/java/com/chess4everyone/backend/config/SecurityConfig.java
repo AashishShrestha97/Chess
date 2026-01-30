@@ -2,12 +2,16 @@ package com.chess4everyone.backend.config;
 
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.http.client.BufferingClientHttpRequestFactory;
+import org.springframework.http.client.ClientHttpRequestFactory;
+import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
 import org.springframework.security.config.http.SessionCreationPolicy;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
+import org.springframework.web.client.RestTemplate;
 import org.springframework.web.cors.CorsConfigurationSource;
 
 import com.chess4everyone.backend.security.CustomOAuth2UserService;
@@ -76,5 +80,19 @@ public class SecurityConfig {
     @Bean
     public BCryptPasswordEncoder passwordEncoder() {
         return new BCryptPasswordEncoder();
+    }
+
+    @Bean
+    public RestTemplate restTemplate() {
+        // Configure HTTP client with longer timeouts for AI API calls
+        ClientHttpRequestFactory factory = new BufferingClientHttpRequestFactory(
+            new SimpleClientHttpRequestFactory() {{
+                // Connection timeout: 30 seconds to establish connection
+                setConnectTimeout(30 * 1000);
+                // Read timeout: 2 minutes (120 seconds) to allow AI analysis to complete
+                setReadTimeout(120 * 1000);
+            }}
+        );
+        return new RestTemplate(factory);
     }
 }

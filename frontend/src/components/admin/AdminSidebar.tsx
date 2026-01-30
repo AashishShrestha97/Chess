@@ -66,10 +66,6 @@ const AdminSidebar: React.FC<AdminSidebarProps> = ({ onTabChange }) => {
     }
   };
 
-  const handleBackHome = () => {
-    navigate("/home");
-  };
-
   return (
     <>
       {/* Sidebar */}
@@ -111,14 +107,6 @@ const AdminSidebar: React.FC<AdminSidebarProps> = ({ onTabChange }) => {
 
         {/* Bottom Actions */}
         <div className="sidebar-bottom">
-          <button
-            className="sidebar-action back-home"
-            onClick={handleBackHome}
-            title="Back to Home"
-          >
-            <FiArrowLeft />
-            <span>Back to Home</span>
-          </button>
           <button
             className="sidebar-action logout"
             onClick={handleLogout}

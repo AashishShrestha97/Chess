@@ -34,3 +34,18 @@ CREATE TABLE IF NOT EXISTS refresh_tokens (
   expiry TIMESTAMP NOT NULL,
   CONSTRAINT fk_rt_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 );
+
+-- Player analysis table - stores cached AI analysis results for each player
+CREATE TABLE IF NOT EXISTS player_analysis (
+  id BIGINT PRIMARY KEY AUTO_INCREMENT,
+  user_id BIGINT NOT NULL UNIQUE,
+  strengths JSON COMMENT 'Array of player strengths identified by AI',
+  weaknesses JSON COMMENT 'Array of player weaknesses identified by AI',
+  metrics JSON COMMENT 'Feature metrics from analysis',
+  predictions JSON COMMENT 'Category predictions (opening, middlegame, endgame, tactical, positional, time_management)',
+  games_analyzed INT DEFAULT 0,
+  analyzed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  CONSTRAINT fk_analysis_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+  INDEX idx_user_id (user_id)
+);

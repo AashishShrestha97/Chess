@@ -174,9 +174,10 @@
     max-width: 1420px;
     margin: 0 auto;
     display: grid;
-    grid-template-columns: minmax(0, 1.6fr) minmax(360px, 1fr);
-    gap: 28px;
-    align-items: flex-start;
+    grid-template-columns: minmax(0, 1.4fr) minmax(320px, 0.95fr);
+    gap: 24px;
+    align-items: start;
+    justify-items: center;
 }
 
 /* ---------- Left Column ---------- */
@@ -184,7 +185,9 @@
 .chess-left-column {
     display: flex;
     flex-direction: column;
-    gap: 18px;
+    gap: 16px;
+    width: 100%;
+    align-items: center;
 }
 
 .chess-board-card {
@@ -199,7 +202,7 @@
     flex-direction: column;
     align-items: center;
     position: relative;
-    left: 120px;
+    margin: 0 auto;
 }
 
 .chess-board-card::before {
@@ -324,6 +327,8 @@
     display: flex;
     flex-direction: column;
     gap: 14px;
+    width: 100%;
+    max-width: 100%;
 }
 
 /* Player cards */
