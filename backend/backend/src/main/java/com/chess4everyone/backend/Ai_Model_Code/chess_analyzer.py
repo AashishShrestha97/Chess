@@ -1,6 +1,7 @@
 """
 Chess Game Analyzer using Stockfish
 Analyzes PGN games and extracts performance features
+CORRECTED: Returns exactly 15 features to match trained ML models
 """
 
 import chess
@@ -300,13 +301,13 @@ class ChessAnalyzer:
 def extract_features(game_analyses: List[GameAnalysis]) -> Dict[str, float]:
     """
     Extract performance features from analyzed games
-    Aligned with ml_trainer.py feature expectations
+    ✅ CORRECTED: Returns exactly 15 features to match trained ML models
     
     Args:
         game_analyses: List of GameAnalysis objects
         
     Returns:
-        Dictionary of 10 features that ML models were trained on
+        Dictionary of 15 features that ML models were trained on
     """
     # Default 15 features for models (when no games to analyze)
     default_features = {
@@ -390,7 +391,7 @@ def extract_features(game_analyses: List[GameAnalysis]) -> Dict[str, float]:
     features['blunder_rate_middlegame'] = sum(1 for m in middlegame_moves if m.is_blunder) / len(middlegame_moves) if middlegame_moves else 0
     features['blunder_rate_endgame'] = sum(1 for m in endgame_moves if m.is_blunder) / len(endgame_moves) if endgame_moves else 0
     
-    # Return all 15 features that models were trained with
+    # ✅ CORRECTED: Return all 15 features that models were trained with
     all_features = {
         'avg_cp_loss': features['avg_cp_loss'],
         'blunder_rate': features['blunder_rate'],

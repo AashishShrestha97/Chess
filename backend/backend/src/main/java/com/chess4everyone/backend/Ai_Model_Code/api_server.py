@@ -325,23 +325,19 @@ async def analyze_player(request: AnalysisRequest):
         
         # Extract features
         features = extract_features(game_analyses)
-        logger.info(f"✓ Extracted {len(features)} features: {list(features.keys())}")
+        logger.info(f"✓ Extracted {len(features)} features")
         logger.debug(f"Feature values: {features}")
         
-        if len(features) < 10:
-            logger.error(f"❌ ERROR: Only {len(features)} features extracted, but classifier expects 10!")
-            logger.error(f"Feature keys: {list(features.keys())}")
+        if len(features) != 15:
+            logger.error(f"ERROR: Extracted {len(features)} features but need exactly 15!")
             raise HTTPException(
                 status_code=400,
-                detail=f"Feature extraction failed: got {len(features)} features, need 10. Games may be empty or malformed."
+                detail=f"Feature extraction failed: got {len(features)} features, need 15."
             )
         
-        # Try to predict and catch specific errors
+        # Try to predict
         try:
-            logger.info("🤖 Calling classifier.predict() with features...")
-            logger.debug(f"   Feature columns: {classifier.feature_columns}")
-            logger.debug(f"   Feature dict keys: {list(features.keys())}")
-            
+            logger.info("Calling classifier.predict() with all 15 features...")
             predictions = classifier.predict(features)
             logger.info(f"✓ Generated predictions for {len(predictions)} categories")
         except ValueError as e:

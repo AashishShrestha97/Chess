@@ -1,6 +1,7 @@
 """
 ML-based Chess Player Classifier
 Loads trained RandomForest models for inference
+CORRECTED: Configured for 15 features to match trained models
 """
 
 import joblib
@@ -34,7 +35,7 @@ class ChessPlayerClassifier:
             try:
                 self.load_models(model_dir)
             except Exception as e:
-                print(f"⚠️  Could not auto-load models: {e}")
+                print(f"WARNING: Could not auto-load models: {e}")
                 print("   Call load_models() manually after initialization")
     
     def load_models(self, model_dir: str):
@@ -55,11 +56,11 @@ class ChessPlayerClassifier:
                 config = json.load(f)
                 self.feature_columns = config['feature_columns']
                 self.categories = config['categories']
-                print(f"✓ Loaded config: {len(self.categories)} categories")
+                print(f"[OK] Loaded config: {len(self.categories)} categories")
         else:
             # Use defaults if config not found
-            print("⚠️  model_config.json not found, using defaults")
-            # 15 features that models were trained with
+            print("[WARNING] model_config.json not found, using defaults")
+            # ✅ CORRECTED: Models were trained with ALL 15 features (including phase-specific ones)
             self.feature_columns = [
                 'avg_cp_loss', 'blunder_rate', 'mistake_rate',
                 'inaccuracy_rate', 'avg_move_time', 'time_pressure_moves',
@@ -81,24 +82,25 @@ class ChessPlayerClassifier:
                     self.models[category] = joblib.load(model_path)
                     self.scalers[category] = joblib.load(scaler_path)
                     loaded_count += 1
-                    print(f"✓ Loaded {category} model")
+                    print(f"[OK] Loaded {category} model")
                 else:
-                    print(f"⚠️  Model files not found for {category}")
+                    print(f"[WARNING] Model files not found for {category}")
                     
             except Exception as e:
-                print(f"✗ Failed to load {category} model: {e}")
+                print(f"[ERROR] Failed to load {category} model: {e}")
         
         if loaded_count == 0:
             raise RuntimeError("No models loaded! Check model directory.")
         
-        print(f"\n✓ Successfully loaded {loaded_count}/{len(self.categories)} models")
+        print(f"\n[OK] Successfully loaded {loaded_count}/{len(self.categories)} models")
+        print(f"[OK] Expecting {len(self.feature_columns)} features per prediction")
     
     def predict(self, features: Dict[str, float]) -> Dict[str, Dict]:
         """
         Predict player classification for all categories
         
         Args:
-            features: Dictionary of extracted features
+            features: Dictionary of all 15 extracted features
             
         Returns:
             Dictionary mapping category to prediction details
@@ -106,24 +108,42 @@ class ChessPlayerClassifier:
         if not self.models:
             raise RuntimeError("No models loaded. Call load_models() first.")
         
+        # Validate we have at least 15 features
+        if len(features) < 15:
+            raise ValueError(
+                f"Feature mismatch! Received {len(features)} features but need all 15. "
+                f"Received: {list(features.keys())}"
+            )
+        
         predictions = {}
         
-        # Prepare feature vector
-        X_input = pd.DataFrame([features])[self.feature_columns].fillna(0)
+        # Create full feature dataframe
+        X_full = pd.DataFrame([features])[self.feature_columns].fillna(0)
         
         for category in self.categories:
             if category not in self.models:
                 continue
             
             model = self.models[category]
-            scaler = self.scalers[category]
+            scaler = self.scalers.get(category)
             
-            # Scale features
-            X_scaled = scaler.transform(X_input)
+            # Scale using the full 15 features if scaler exists
+            if scaler is not None:
+                X_scaled = scaler.transform(X_full)
+            else:
+                # No scaler for this model, use raw features
+                X_scaled = X_full.values
+            
+            # Get the feature names the model expects
+            expected_features = list(model.feature_names_in_)
+            
+            # Select only the features this model was trained with
+            feature_indices = [self.feature_columns.index(f) for f in expected_features if f in self.feature_columns]
+            X_model_input = X_scaled[:, feature_indices]
             
             # Predict
-            pred_label = model.predict(X_scaled)[0]
-            pred_proba = model.predict_proba(X_scaled)[0]
+            pred_label = model.predict(X_model_input)[0]
+            pred_proba = model.predict_proba(X_model_input)[0]
             
             label_map = {0: 'weak', 1: 'average', 2: 'strong'}
             
@@ -152,12 +172,14 @@ class ChessPlayerClassifier:
             classification = pred['classification']
             confidence = pred['confidence']
             
-            # Only include high-confidence predictions
-            if confidence >= 0.65:
-                if classification == 'strong':
-                    strengths.append(category)
-                elif classification == 'weak':
-                    weaknesses.append(category)
+            # STRICT: Only include very high-confidence predictions for strengths
+            # Require 75% confidence to be considered a strength
+            if classification == 'strong' and confidence >= 0.75:
+                strengths.append(category)
+            # Include both 'weak' and 'average' as weaknesses to help user improve
+            # Require 60% confidence for weaknesses
+            elif (classification == 'weak' or classification == 'average') and confidence >= 0.60:
+                weaknesses.append(category)
         
         return {
             'strengths': strengths,
@@ -182,14 +204,15 @@ if __name__ == "__main__":
         classifier = ChessPlayerClassifier(model_dir='models')
         info = classifier.get_model_info()
         
-        print("\\nModel Info:")
+        print("\nModel Info:")
         print(f"  Models loaded: {len(info['categories_loaded'])}/{info['total_categories']}")
         print(f"  Categories: {', '.join(info['categories_loaded'])}") 
         print(f"  Features: {info['feature_count']}")
+        print(f"  Feature names: {info['features']}")
         
     except Exception as e:
         print(f"Error: {e}")
-        print("\\nMake sure you have:")
+        print("\nMake sure you have:")
         print("  1. Created 'models/' directory")
         print("  2. Placed .pkl model files in it")
         print("  3. Included model_config.json")
