@@ -24,15 +24,11 @@ export const checkEmailApi = (email: string) =>
   http.get("/api/auth/check-email", { params: { email } });
 
 export const googleUrl = () => {
-  // Force account picker if user just logged out from Google
-  // The prompt=select_account parameter tells Google to show the account picker
-  const hasJustLoggedOut = sessionStorage.getItem("google_logout") === "true";
-  const prompt = hasJustLoggedOut ? "select_account" : "select_account"; // Always force select_account
-  
-  // Clear the logout flag after using it
-  if (hasJustLoggedOut) {
-    sessionStorage.removeItem("google_logout");
-  }
+  // Force account picker and consent screen every time
+  // The prompt parameter with "select_account consent" forces Google to:
+  // 1. Always show the account selection screen (select_account)
+  // 2. Always show the consent screen (consent) - this prevents cached authorization
+  const prompt = "select_account consent";
   
   return `${API_BASE}/oauth2/authorization/google?prompt=${prompt}`;
 };

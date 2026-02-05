@@ -9,6 +9,7 @@ import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
 import org.springframework.security.config.http.SessionCreationPolicy;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
+import org.springframework.security.oauth2.client.registration.ClientRegistrationRepository;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
 import org.springframework.web.client.RestTemplate;
@@ -26,16 +27,19 @@ public class SecurityConfig {
     private final CustomOAuth2UserService oauth2UserService;
     private final OAuth2SuccessHandler oauth2SuccessHandler;
     private final CorsConfigurationSource corsConfigurationSource;
+    private final ClientRegistrationRepository clientRegistrationRepository;
 
     public SecurityConfig(
             JwtAuthenticationFilter jwtAuthFilter,
             CustomOAuth2UserService oauth2UserService,
             OAuth2SuccessHandler oauth2SuccessHandler,
-            CorsConfigurationSource corsConfigurationSource) {
+            CorsConfigurationSource corsConfigurationSource,
+            ClientRegistrationRepository clientRegistrationRepository) {
         this.jwtAuthFilter = jwtAuthFilter;
         this.oauth2UserService = oauth2UserService;
         this.oauth2SuccessHandler = oauth2SuccessHandler;
         this.corsConfigurationSource = corsConfigurationSource;
+        this.clientRegistrationRepository = clientRegistrationRepository;
     }
 
     @Bean
@@ -64,8 +68,16 @@ public class SecurityConfig {
                 .anyRequest().authenticated()
             )
             
-            // OAuth2 login
+            // OAuth2 login with custom authorization request resolver
             .oauth2Login(oauth2 -> oauth2
+                .authorizationEndpoint(auth -> auth
+                    .authorizationRequestResolver(
+                        new CustomOAuth2AuthorizationRequestResolver(
+                            clientRegistrationRepository,
+                            "/oauth2/authorization"
+                        )
+                    )
+                )
                 .userInfoEndpoint(userInfo -> 
                     userInfo.userService(oauth2UserService))
                 .successHandler(oauth2SuccessHandler)

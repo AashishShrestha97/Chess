@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import AdminSidebar from "../components/admin/AdminSidebar";
 import UserManagement from "../components/admin/UserManagement";
@@ -9,14 +9,20 @@ import {
   FiMic,
   FiSettings,
   FiShield,
+  FiActivity,
 } from "react-icons/fi";
 import "./AdminPage.css";
 
-type TabType = "users" | "voice-commands" | "game-modes";
+type TabType = "users" | "voice-commands" | "game-modes" | "dashboard";
 
 const AdminPage: React.FC = () => {
   const navigate = useNavigate();
-  const [activeTab, setActiveTab] = useState<TabType>("users");
+  const [activeTab, setActiveTab] = useState<TabType>("dashboard");
+  const [stats, setStats] = useState({
+    totalUsers: 0,
+    totalVoiceCommands: 0,
+    totalGameModes: 0,
+  });
 
   const tabs = [
     {
