@@ -111,7 +111,7 @@ public class SecurityConfig {
                 // Connection timeout: 30 seconds to establish connection
                 setConnectTimeout(30 * 1000);
                 // Read timeout: 2 minutes (120 seconds) to allow AI analysis to complete
-                setReadTimeout(120 * 1000);
+                setReadTimeout(5 * 60 * 1000);
             }}
         );
         return new RestTemplate(factory);

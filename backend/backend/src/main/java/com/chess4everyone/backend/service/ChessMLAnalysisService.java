@@ -82,8 +82,8 @@ public class ChessMLAnalysisService {
         }
         
         // Validate and clamp game count between 1 and maxGamesForAnalysis
-        if (gameCount < 1) {
-            gameCount = 1;
+        if (gameCount < 5) {
+            gameCount = 5;
         }
         if (gameCount > maxGamesForAnalysis) {
             gameCount = maxGamesForAnalysis;

@@ -1,248 +1,255 @@
 """
-FastAPI Server for Chess Player ML Analysis
-=============================================
-Receives game data from Java backend, analyzes it using trained models,
-and returns player strength/weakness predictions.
+FastAPI Server — Chess4Everyone ML Analysis
+============================================
+Receives PGN games from the Java backend, runs Stockfish + XGBoost
+inference, and returns category-level skill predictions.
 
-Endpoint:
-  POST /analyze-player
-  
-Request format:
-{
-    "user_id": "123",
-    "player_name": "PlayerName",
-    "games": [
-        {"pgn": "...PGN string..."},
-        {"pgn": "...PGN string..."}
-    ]
-}
+POST /analyze-player
+  Request  → MLAnalysisRequest  (user_id, player_name, games[{pgn}])
+  Response → MLAnalysisResponse (predictions keyed by category name)
 
-Response format:
-{
-    "user_id": "123",
-    "timestamp": "2024-02-05T...",
-    "games_analyzed": 10,
-    "predictions": {
-        "opening": {"classification": "good", "confidence": 0.82, "numeric_score": 82},
-        "middlegame": {...},
-        ...
-    },
-    "strengths": ["Strong opening play", ...],
-    "weaknesses": ["Weak endgame", ...],
-    "features": {...},
-    "recommendation": "..."
-}
+The response shape MUST match what ChessMLAnalysisService.java expects:
+  predictions = {
+    "opening":         {classification, confidence, numeric_score},
+    "middlegame":      {classification, confidence, numeric_score},
+    "endgame":         {classification, confidence, numeric_score},
+    "tactical":        {classification, confidence, numeric_score},
+    "positional":      {classification, confidence, numeric_score},  ← mapped to MLPredictions.strategy
+    "time_management": {classification, confidence, numeric_score},  ← mapped to MLPredictions.timeManagement
+  }
 """
 
+import logging
+import warnings
+from typing import Dict, List, Optional
+
+import uvicorn
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
-from typing import List, Dict, Optional
-import logging
-import uvicorn
+
 from ml_inference import MLInferenceEngine
 
-# Configure logging
+warnings.filterwarnings("ignore", category=DeprecationWarning)
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Logging
+# ─────────────────────────────────────────────────────────────────────────────
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    format="%(asctime)s  %(levelname)-8s  %(name)s — %(message)s",
 )
 logger = logging.getLogger(__name__)
 
-# Initialize FastAPI app
+# ─────────────────────────────────────────────────────────────────────────────
+# FastAPI app
+# ─────────────────────────────────────────────────────────────────────────────
 app = FastAPI(
     title="Chess4Everyone ML Analysis API",
-    description="Analyzes chess games using trained ML models",
-    version="1.0.0"
+    description=(
+        "Analyses chess games with Stockfish + trained XGBoost models. "
+        "Returns skill predictions for 6 categories: opening, middlegame, "
+        "endgame, tactical, positional, time_management."
+    ),
+    version="2.0.0",
 )
 
-# Initialize ML engine globally
 ml_engine: Optional[MLInferenceEngine] = None
 
 
-# ============================================================
-# Pydantic Models for Request/Response
-# ============================================================
+# ─────────────────────────────────────────────────────────────────────────────
+# Pydantic schemas
+# ─────────────────────────────────────────────────────────────────────────────
 
 class GameData(BaseModel):
-    """Single game in PGN format"""
-    pgn: str = Field(..., description="PGN notation of the chess game")
+    """Single chess game in PGN format."""
+    pgn: str = Field(..., description="Full PGN string of the game")
 
 
 class AnalysisRequest(BaseModel):
-    """Request to analyze player games"""
-    user_id: str = Field(..., description="Unique user ID")
-    player_name: str = Field(..., description="Player name/username")
-    games: List[GameData] = Field(..., description="List of games to analyze (up to 10)")
+    """
+    Sent by ChessMLAnalysisService.java (MLAnalysisRequest DTO).
+    Fields match: user_id, player_name, games (List of {pgn}).
+    """
+    user_id:     str            = Field(..., description="User ID as string")
+    player_name: str            = Field(..., description="Player username")
+    games:       List[GameData] = Field(..., description="Up to 20 recent games")
 
 
-class PredictionResult(BaseModel):
-    """Single category prediction result"""
-    classification: str = Field(..., description="excellent, good, average, or weak")
-    confidence: float = Field(..., ge=0.0, le=1.0, description="Confidence score 0-1")
-    numeric_score: int = Field(..., ge=0, le=100, description="Numeric score 0-100")
+class CategoryPrediction(BaseModel):
+    """Matches MLCategoryPrediction.java DTO."""
+    classification: str   = Field(..., description="excellent | average | weak")
+    confidence:     float = Field(..., ge=0.0, le=1.0)
+    numeric_score:  int   = Field(..., ge=0,   le=100,
+                                  alias="numeric_score",
+                                  description="0-100 skill level for UI bar")
+
+    class Config:
+        populate_by_name = True
+
+
+class PredictionsBlock(BaseModel):
+    """
+    Matches the 'predictions' map that ChessMLAnalysisService.convertMapToMLAnalysisResponse
+    iterates over.  Keys are normalised in Java via normalizeCategoryName().
+    """
+    opening:         CategoryPrediction
+    middlegame:      CategoryPrediction
+    endgame:         CategoryPrediction
+    tactical:        CategoryPrediction
+    positional:      CategoryPrediction   # Java maps this → MLPredictions.strategy
+    time_management: CategoryPrediction   # Java maps this → MLPredictions.timeManagement
 
 
 class AnalysisResponse(BaseModel):
-    """Response with player analysis"""
-    user_id: str
-    timestamp: str
-    games_analyzed: int
-    predictions: Dict[str, PredictionResult]
-    strengths: List[str]
-    weaknesses: List[str]
-    features: Dict[str, float]
-    recommendation: str
+    """Matches MLAnalysisResponse.java DTO (snake_case for @JsonProperty)."""
+    user_id:         str                    = Field(..., alias="user_id")
+    timestamp:       str
+    games_analyzed:  int                    = Field(..., alias="games_analyzed")
+    predictions:     PredictionsBlock
+    strengths:       List[str]
+    weaknesses:      List[str]
+    features:        Dict[str, float]
+    recommendation:  str
+
+    class Config:
+        populate_by_name = True
 
 
 class HealthResponse(BaseModel):
-    """Health check response"""
-    status: str
-    engine_loaded: bool
+    status:           str
+    engine_loaded:    bool
     models_available: List[str]
 
 
-# ============================================================
-# Startup/Shutdown
-# ============================================================
-
-# Suppress deprecation warnings
-import warnings
-warnings.filterwarnings('ignore', category=DeprecationWarning)
+# ─────────────────────────────────────────────────────────────────────────────
+# Lifecycle
+# ─────────────────────────────────────────────────────────────────────────────
 
 @app.on_event("startup")
-async def startup_event():
-    """Initialize ML engine on startup"""
+async def startup():
     global ml_engine
     try:
-        logger.info("🚀 Starting Chess ML Analysis API...")
+        logger.info("🚀 Starting Chess ML Analysis API v2 …")
         ml_engine = MLInferenceEngine()
-        logger.info("✅ ML Engine initialized successfully")
-    except Exception as e:
-        logger.error(f"❌ Failed to initialize ML Engine: {e}")
+        logger.info("✅ ML Engine ready  |  models: %s", list(ml_engine.models.keys()))
+    except Exception as exc:
+        logger.error("❌ Startup failed: %s", exc)
         raise
 
 
 @app.on_event("shutdown")
-async def shutdown_event():
-    """Cleanup on shutdown"""
-    logger.info("🛑 Shutting down Chess ML Analysis API...")
+async def shutdown():
+    logger.info("🛑 Shutting down …")
 
 
-# ============================================================
-# API Endpoints
-# ============================================================
+# ─────────────────────────────────────────────────────────────────────────────
+# Endpoints
+# ─────────────────────────────────────────────────────────────────────────────
 
-@app.get("/health", response_model=HealthResponse)
-async def health_check():
-    """Check if API is running and models are loaded"""
-    if ml_engine is None:
-        return HealthResponse(
-            status="error",
-            engine_loaded=False,
-            models_available=[]
-        )
-    
-    return HealthResponse(
-        status="ok",
-        engine_loaded=True,
-        models_available=list(ml_engine.models.keys())
-    )
-
-
-@app.post("/analyze-player", response_model=AnalysisResponse)
-async def analyze_player(request: AnalysisRequest) -> AnalysisResponse:
-    """
-    Analyze player's chess games using ML models
-    
-    Takes up to 10 recent games, analyzes them with Stockfish,
-    extracts features, and classifies player strengths/weaknesses
-    using trained ML models.
-    
-    Args:
-        request: Analysis request with games and player info
-        
-    Returns:
-        Analysis result with predictions and recommendations
-        
-    Raises:
-        HTTPException: If no games provided or analysis fails
-    """
-    if ml_engine is None:
-        logger.error("❌ ML Engine not initialized")
-        raise HTTPException(status_code=500, detail="ML Engine not initialized")
-    
-    if not request.games:
-        logger.warning("⚠️ Empty games list in request")
-        raise HTTPException(status_code=400, detail="At least one game is required")
-    
-    if len(request.games) > 10:
-        logger.warning(f"⚠️ Too many games: {len(request.games)}, limiting to 10")
-        request.games = request.games[:10]
-    
-    try:
-        logger.info(f"📊 Analyzing {len(request.games)} games for user: {request.user_id}")
-        
-        # Extract PGN strings
-        pgn_games = [game.pgn for game in request.games]
-        
-        # Analyze games
-        result = ml_engine.analyze_games(pgn_games, request.player_name)
-        
-        # Update user_id in result
-        result['user_id'] = request.user_id
-        
-        logger.info(f"✅ Analysis complete for user: {request.user_id}")
-        
-        # Convert to response model
-        response = AnalysisResponse(
-            user_id=result['user_id'],
-            timestamp=result['timestamp'],
-            games_analyzed=result['games_analyzed'],
-            predictions={
-                k: PredictionResult(**v)
-                for k, v in result['predictions'].items()
-            },
-            strengths=result['strengths'],
-            weaknesses=result['weaknesses'],
-            features=result['features'],
-            recommendation=result['recommendation']
-        )
-        
-        return response
-        
-    except Exception as e:
-        logger.error(f"❌ Error analyzing player: {e}", exc_info=True)
-        raise HTTPException(
-            status_code=500,
-            detail=f"Analysis failed: {str(e)}"
-        )
-
-
-@app.get("/")
+@app.get("/", tags=["info"])
 async def root():
-    """Root endpoint with API information"""
     return {
-        "name": "Chess4Everyone ML Analysis API",
-        "version": "1.0.0",
+        "name":    "Chess4Everyone ML Analysis API",
+        "version": "2.0.0",
         "endpoints": {
-            "health": "GET /health",
+            "health":  "GET  /health",
             "analyze": "POST /analyze-player",
-            "docs": "GET /docs"
-        }
+            "docs":    "GET  /docs",
+        },
     }
 
 
-# ============================================================
-# Standalone server launcher
-# ============================================================
-
-if __name__ == "__main__":
-    logger.info("🎯 Starting Chess ML Analysis FastAPI Server")
-    
-    # Run with uvicorn
-    uvicorn.run(
-        app,
-        host="0.0.0.0",
-        port=8000,
-        log_level="info"
+@app.get("/health", response_model=HealthResponse, tags=["info"])
+async def health():
+    if ml_engine is None:
+        return HealthResponse(status="error", engine_loaded=False, models_available=[])
+    return HealthResponse(
+        status="ok",
+        engine_loaded=True,
+        models_available=list(ml_engine.models.keys()),
     )
+
+
+@app.post("/analyze-player", response_model=AnalysisResponse, tags=["analysis"])
+async def analyze_player(request: AnalysisRequest) -> AnalysisResponse:
+    """
+    Analyse a player's recent games.
+
+    Steps:
+      1. Validate input (1-20 games required).
+      2. Run Stockfish on every PGN via ChessAnalyzer.
+      3. Extract aggregate features.
+      4. Predict per-category skill with XGBoost models.
+      5. Return structured predictions + strengths / weaknesses.
+
+    Raises:
+      400 – no games supplied
+      500 – ML engine not ready or analysis failed
+    """
+    if ml_engine is None:
+        raise HTTPException(status_code=500, detail="ML Engine not initialised")
+
+    if not request.games:
+        raise HTTPException(status_code=400, detail="At least one game is required")
+
+    # Cap at 20 games (matches Java maxGamesForAnalysis default)
+    games = request.games[:20]
+    pgn_strings = [g.pgn for g in games]
+
+    logger.info(
+        "📊 Analysing %d game(s) for user=%s  player='%s'",
+        len(pgn_strings), request.user_id, request.player_name,
+    )
+
+    try:
+        raw = ml_engine.analyze_games(pgn_strings, request.player_name)
+    except Exception as exc:
+        logger.error("❌ analysis error: %s", exc, exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Analysis failed: {exc}")
+
+    raw["user_id"] = request.user_id
+
+    # Validate all 6 categories are present (engine always returns them but be safe)
+    required = {"opening", "middlegame", "endgame", "tactical", "positional", "time_management"}
+    missing = required - set(raw.get("predictions", {}).keys())
+    if missing:
+        logger.error("Missing categories in predictions: %s", missing)
+        raise HTTPException(status_code=500, detail=f"Missing predictions: {missing}")
+
+    try:
+        preds_raw = raw["predictions"]
+        predictions = PredictionsBlock(
+            opening         = CategoryPrediction(**preds_raw["opening"]),
+            middlegame      = CategoryPrediction(**preds_raw["middlegame"]),
+            endgame         = CategoryPrediction(**preds_raw["endgame"]),
+            tactical        = CategoryPrediction(**preds_raw["tactical"]),
+            positional      = CategoryPrediction(**preds_raw["positional"]),
+            time_management = CategoryPrediction(**preds_raw["time_management"]),
+        )
+
+        response = AnalysisResponse(
+            user_id        = raw["user_id"],
+            timestamp      = raw["timestamp"],
+            games_analyzed = raw["games_analyzed"],
+            predictions    = predictions,
+            strengths      = raw["strengths"],
+            weaknesses     = raw["weaknesses"],
+            features       = raw["features"],
+            recommendation = raw["recommendation"],
+        )
+    except Exception as exc:
+        logger.error("❌ Response construction failed: %s", exc, exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Response serialisation error: {exc}")
+
+    logger.info(
+        "✅ Done  |  games=%d  strengths=%d  weaknesses=%d",
+        response.games_analyzed, len(response.strengths), len(response.weaknesses),
+    )
+    return response
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Dev launcher
+# ─────────────────────────────────────────────────────────────────────────────
+if __name__ == "__main__":
+    uvicorn.run(app, host="0.0.0.0", port=8000, log_level="info")

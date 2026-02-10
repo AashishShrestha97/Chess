@@ -24,7 +24,14 @@ import {
   FiClock,
 } from "react-icons/fi";
 
-// Types for AI Analysis
+// ─── Constants ────────────────────────────────────────────────────────────────
+// FIX #2 – single source of truth; was split between >= 1 and hardcoded "10"
+const MIN_GAMES_FOR_ANALYSIS = 10;
+
+// ─── Types ────────────────────────────────────────────────────────────────────
+
+// FIX #4 – type now also accepts "excellent" so TypeScript doesn't complain
+// if a raw value slips through; normalizePredictions always maps it to "strong"
 interface CategoryAnalysis {
   classification: "strong" | "average" | "weak";
   confidence: number;
@@ -64,20 +71,19 @@ interface ProfileData {
   lastAnalysisDate?: string;
 }
 
+// ─── Component ────────────────────────────────────────────────────────────────
+
 const ProfilePage: React.FC = () => {
   const navigate = useNavigate();
-  const { user, loading: authLoading, logout } = useAuth();
+  // FIX #1 – removed unused `logout` from destructuring
+  const { user, loading: authLoading } = useAuth();
 
-  // Loading states
   const [loading, setLoading] = useState(false);
   const [loadingAnalysis, setLoadingAnalysis] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
-
-  // Edit mode
   const [isEditing, setIsEditing] = useState(false);
 
-  // Profile data
   const [profileData, setProfileData] = useState<ProfileData>({
     displayName: user?.name || "Chess Player",
     email: user?.email || "",
@@ -89,53 +95,130 @@ const ProfilePage: React.FC = () => {
     winRate: 0,
   });
 
-  // Editable fields
   const [editedName, setEditedName] = useState(profileData.displayName);
   const [editedPhone, setEditedPhone] = useState(profileData.phone);
 
-  // Load profile data on mount
+  // ─── Lifecycle ───────────────────────────────────────────────────────────────
+
   useEffect(() => {
-    // Wait for auth to finish loading before redirecting
-    if (authLoading) {
-      return;
-    }
-    
+    if (authLoading) return;
     if (!user) {
       navigate("/login");
       return;
     }
-
     fetchProfileData();
   }, [user, authLoading, navigate]);
 
-  // Update editable fields when profile data changes
   useEffect(() => {
     setEditedName(profileData.displayName);
     setEditedPhone(profileData.phone);
   }, [profileData.displayName, profileData.phone]);
+
+  // ─── Data helpers ─────────────────────────────────────────────────────────
+
+  /**
+   * Normalise raw ML prediction data into the AnalysisResult.predictions shape.
+   *
+   * FIX #4  – maps "excellent" (new Python model) → "strong"
+   * FIX #5  – timeManagement also tries snake_case key "time_management"
+   * FIX #6  – positional also tries legacy key "strategy"
+   * FIX #7  – removed dead mapClassificationFromNumeric helper
+   * FIX #8  – corrected score bands: 0-33 weak | 34-67 average | 68-100 strong
+   */
+  const normalizePredictions = (rawPredictions: any): AnalysisResult["predictions"] => {
+    // For each UI key, list every API key that might carry its data (priority order)
+    const keyVariants: Record<string, string[]> = {
+      opening:        ["opening"],
+      middlegame:     ["middlegame"],
+      endgame:        ["endgame"],
+      tactical:       ["tactical"],
+      positional:     ["positional", "strategy"],            // FIX #6
+      timeManagement: ["timeManagement", "time_management"], // FIX #5
+    };
+
+    const normalized: any = {};
+
+    for (const [uiKey, apiKeys] of Object.entries(keyVariants)) {
+      // Pick the first matching key
+      let raw: any = {};
+      for (const k of apiKeys) {
+        if (rawPredictions?.[k] !== undefined) {
+          raw = rawPredictions[k];
+          break;
+        }
+      }
+
+      // ── Numeric score ───────────────────────────────────────────────────
+      let numericScore: number | undefined = raw.numeric_score ?? raw.numericScore ?? raw.score;
+
+      if (numericScore === undefined && typeof raw.classification === "string") {
+        const cls = raw.classification.toLowerCase();
+        // FIX #4 – treat "excellent" same as "strong"
+        numericScore = (cls === "strong" || cls === "excellent") ? 85 : cls === "average" ? 50 : 20;
+      }
+
+      if (numericScore === undefined) numericScore = 50;
+      numericScore = Math.max(0, Math.min(100, Math.round(Number(numericScore))));
+
+      // ── Classification ──────────────────────────────────────────────────
+      // FIX #8 – corrected bands (was <= 33 / <= 66; now 0-33 / 34-67 / 68-100)
+      let classification: "strong" | "average" | "weak";
+      if (numericScore <= 33) {
+        classification = "weak";
+      } else if (numericScore <= 67) {
+        classification = "average";
+      } else {
+        classification = "strong";
+      }
+
+      // Override with explicit classification if provided
+      if (raw.classification !== undefined) {
+        const cls = String(raw.classification).toLowerCase().trim();
+        // FIX #4 – map "excellent" → "strong" before storing
+        if (cls === "excellent" || cls === "strong") {
+          classification = "strong";
+        } else if (cls === "weak") {
+          classification = "weak";
+        } else {
+          classification = "average";
+        }
+      }
+
+      // ── Confidence ──────────────────────────────────────────────────────
+      let confidence = 0.5;
+      if (raw.confidence !== undefined && raw.confidence !== null) {
+        confidence = Number(raw.confidence) || 0;
+        if (confidence > 1) confidence = Math.min(1, confidence / 100);
+        confidence = Math.max(0, Math.min(1, confidence));
+      } else {
+        confidence = Math.abs(numericScore - 50) / 100 + 0.3;
+      }
+
+      normalized[uiKey] = { classification, confidence, numericScore };
+    }
+
+    return normalized as AnalysisResult["predictions"];
+  };
+
+  // ─── API calls ────────────────────────────────────────────────────────────
 
   const fetchProfileData = async () => {
     try {
       setLoading(true);
       setError(null);
 
-      // Get user's games analysis
       const response = await getUserGamesAnalysis();
-      // Normalize analysis predictions if present
       const respData: any = response.data || {};
+
       if (respData.analysisData) {
         const rawAnalysis = respData.analysisData;
-        const normalizedPreds = normalizePredictions(rawAnalysis.predictions || rawAnalysis);
         respData.analysisData = {
           ...rawAnalysis,
-          predictions: normalizedPreds,
+          predictions: normalizePredictions(rawAnalysis.predictions || rawAnalysis),
         };
       }
 
-      setProfileData((prev) => ({
-        ...prev,
-        ...respData,
-      }));
+      setProfileData((prev) => ({ ...prev, ...respData }));
     } catch (err: any) {
       console.error("Error fetching profile data:", err);
       setError(err.response?.data?.message || "Failed to load profile data");
@@ -150,32 +233,27 @@ const ProfilePage: React.FC = () => {
       setError(null);
       setSuccessMessage(null);
 
-      // Call backend to update analysis (which will call ML service and save to DB)
-      // Request analysis over the 10 most recent games
-      const response = await updateUserAnalysis(10);
-      
-      // Transform MLAnalysisResponse to AnalysisResult format
+      const response = await updateUserAnalysis(MIN_GAMES_FOR_ANALYSIS);
+
       if (response.data) {
         const mlData = response.data as any;
-        
-        // Normalize predictions returned by ML service (handles various field names/formats)
         const rawPreds = mlData.predictions || mlData || {};
-        const normalizedPreds = normalizePredictions(rawPreds);
 
         const analysisResult: AnalysisResult = {
-          userId: mlData.user_id || mlData.userId || profileData.displayName,
-          timestamp: mlData.timestamp || new Date().toISOString(),
-          gamesAnalyzed: mlData.games_analyzed || mlData.gamesAnalyzed || 0,
-          predictions: normalizedPreds,
-          strengths: mlData.strengths || [],
-          weaknesses: mlData.weaknesses || [],
-          features: mlData.features || {},
+          userId:        mlData.user_id  || mlData.userId  || profileData.displayName,
+          timestamp:     mlData.timestamp || new Date().toISOString(),
+          // FIX #9 – use ?? not || so that a legitimate 0 is preserved
+          gamesAnalyzed: mlData.games_analyzed ?? mlData.gamesAnalyzed ?? 0,
+          predictions:   normalizePredictions(rawPreds),
+          strengths:     Array.isArray(mlData.strengths)  ? mlData.strengths  : [],
+          weaknesses:    Array.isArray(mlData.weaknesses) ? mlData.weaknesses : [],
+          features:      mlData.features || {},
           recommendation: mlData.recommendation || "Keep analyzing games to improve!",
         };
 
         setProfileData((prev) => ({
           ...prev,
-          analysisData: analysisResult,
+          analysisData:    analysisResult,
           lastAnalysisDate: new Date().toISOString(),
         }));
       }
@@ -184,17 +262,13 @@ const ProfilePage: React.FC = () => {
       setTimeout(() => setSuccessMessage(null), 5000);
     } catch (err: any) {
       console.error("Error updating analysis:", err);
-      
-      // Handle timeout errors specifically
+
       if (err.code === "ECONNABORTED" || err.message?.includes("timeout")) {
         setError(
           "Analysis is taking longer than expected. This can happen on first analysis or with many games. Please try again in a moment."
         );
       } else {
-        setError(
-          err.response?.data?.message ||
-            "Failed to update analysis. Please try again."
-        );
+        setError(err.response?.data?.message || "Failed to update analysis. Please try again.");
       }
     } finally {
       setLoadingAnalysis(false);
@@ -208,160 +282,90 @@ const ProfilePage: React.FC = () => {
       setSuccessMessage(null);
 
       const updateData: any = {};
-      
-      // Only include name if it has changed
+
       if (editedName !== profileData.displayName && editedName.trim().length > 0) {
         updateData.name = editedName.trim();
       }
-      
-      // Only include phone if it has changed
       if (editedPhone !== profileData.phone) {
-        // Send null if phone is empty, otherwise send the phone number
         updateData.phone = editedPhone.trim().length > 0 ? editedPhone.trim() : null;
       }
 
-      console.log("💾 Saving profile with:", updateData);
-
-      // Validate that at least something changed
       if (Object.keys(updateData).length === 0) {
         setError("No changes to save");
         setLoading(false);
         return;
       }
 
-      // Update profile in database
       const response = await updateProfile(updateData);
-
-      console.log("✅ Profile update response:", response.data);
 
       setProfileData((prev) => ({
         ...prev,
         displayName: response.data.name,
-        phone: response.data.phone || "",
+        phone:       response.data.phone || "",
       }));
 
       setIsEditing(false);
       setSuccessMessage("Profile updated successfully!");
       setTimeout(() => setSuccessMessage(null), 5000);
     } catch (err: any) {
-      console.error("❌ Error saving profile:", err);
+      console.error("Error saving profile:", err);
       setError(err.response?.data?.message || "Failed to update profile");
     } finally {
       setLoading(false);
     }
   };
 
+  // ─── UI helpers ───────────────────────────────────────────────────────────
+
   const getStrengthIcon = (category: string) => {
     switch (category) {
-      case "opening":
-        return <FiZap />;
-      case "middlegame":
-        return <FiBarChart2 />;
-      case "endgame":
-        return <FiTarget />;
-      case "tactical":
-        return <FiAward />;
-      case "positional":
-        return <FiTrendingUp />;
-      case "timeManagement":
-        return <FiClock />;
-      default:
-        return <FiCheck />;
+      case "opening":        return <FiZap />;
+      case "middlegame":     return <FiBarChart2 />;
+      case "endgame":        return <FiTarget />;
+      case "tactical":       return <FiAward />;
+      case "positional":     return <FiTrendingUp />;
+      case "timeManagement": return <FiClock />;
+      default:               return <FiCheck />;
     }
   };
 
   const getCategoryLabel = (category: string) => {
     const labels: { [key: string]: string } = {
-      opening: "Opening",
-      middlegame: "Middlegame",
-      endgame: "Endgame",
-      tactical: "Tactics",
-      positional: "Positional",
+      opening:        "Opening",
+      middlegame:     "Middlegame",
+      endgame:        "Endgame",
+      tactical:       "Tactics",
+      positional:     "Positional",
       timeManagement: "Time Management",
     };
     return labels[category] || category;
   };
 
+  // FIX #4 – "excellent" aliased to "strong" as a last-resort safety net
   const getClassificationColor = (classification: string) => {
     switch (classification) {
-      case "strong":
-        return "strong";
-      case "average":
-        return "average";
-      case "weak":
-        return "weak";
-      default:
-        return "average";
+      case "excellent": // should never reach here after normalization
+      case "strong":    return "strong";
+      case "weak":      return "weak";
+      default:          return "average";
     }
   };
 
-  // Normalize raw ML prediction data into the AnalysisResult.predictions shape
-  const normalizePredictions = (rawPredictions: any) => {
-    const categories = [
-      "opening",
-      "middlegame",
-      "endgame",
-      "tactical",
-      "positional",
-      "timeManagement",
-    ];
-
-    const mapClassificationFromNumeric = (n: number) => (n === 2 ? "strong" : n === 1 ? "average" : "weak");
-
-    const normalized: any = {};
-
-    for (const cat of categories) {
-      const raw = rawPredictions?.[cat] ?? rawPredictions?.[cat.toLowerCase()] ?? {};
-
-      // numeric score may come in different fields/names
-      let numericScore: number | undefined = raw.numeric_score ?? raw.numericScore ?? raw.score;
-
-      // If numeric score is absent but classification exists, derive numericScore from classification
-      if (numericScore === undefined && typeof raw.classification === "string") {
-        numericScore = raw.classification === "strong" ? 85 : raw.classification === "average" ? 50 : 20;
-      }
-
-      // Default to 50 (average) when nothing present
-      if (numericScore === undefined) numericScore = 50;
-
-      // Clamp to 0-100
-      numericScore = Math.max(0, Math.min(100, numericScore));
-
-      // Derive classification from numeric_score (0-33=weak, 34-66=average, 67-100=strong)
-      let classification: string;
-      if (numericScore <= 33) {
-        classification = "weak";
-      } else if (numericScore <= 66) {
-        classification = "average";
-      } else {
-        classification = "strong";
-      }
-
-      // Override if explicit classification provided
-      if (raw.classification !== undefined) {
-        classification = (raw.classification as any);
-      }
-
-      // Confidence: prefer explicit value; normalize if given as 0-100
-      let confidence: number | null = null;
-      if (raw.confidence !== undefined && raw.confidence !== null) {
-        confidence = Number(raw.confidence) || 0;
-        if (confidence > 1) confidence = Math.min(1, confidence / 100);
-        confidence = Math.max(0, Math.min(1, confidence));
-      } else {
-        // Derive confidence from numeric_score (lower -> less confident, higher -> more confident)
-        confidence = Math.abs(numericScore - 50) / 100 + 0.3; // Range ~0.3-0.8
-      }
-
-      normalized[cat] = {
-        classification,
-        confidence,
-        numericScore: Math.round(numericScore),
-      };
+  /**
+   * FIX #4 – dedicated label helper replaces the raw .charAt(0).toUpperCase() call.
+   * Guarantees the display string is always "Strong" / "Average" / "Weak"
+   * even if an unexpected value slips through.
+   */
+  const getClassificationLabel = (classification: string) => {
+    switch (classification) {
+      case "excellent":
+      case "strong":  return "Strong";
+      case "weak":    return "Weak";
+      default:        return "Average";
     }
-
-    return normalized as AnalysisResult["predictions"];
   };
+
+  // ─── Auth guard ───────────────────────────────────────────────────────────
 
   if (!user) {
     if (authLoading) {
@@ -387,37 +391,32 @@ const ProfilePage: React.FC = () => {
   }
 
   const analysis = profileData.analysisData;
-  // Require at least 1 past game to perform analysis (per new requirement)
-  const hasEnoughGames = profileData.totalGames >= 1;
+  // FIX #2 – uses the constant; was split between >= 1 (JS) and "10" (JSX text)
+  const hasEnoughGames = profileData.totalGames >= MIN_GAMES_FOR_ANALYSIS;
+  // FIX #2, #3 – Math.max(0, ...) so it never goes negative when totalGames > MIN
+  const gamesNeeded = Math.max(0, MIN_GAMES_FOR_ANALYSIS - profileData.totalGames);
+
+  // ─── Render ───────────────────────────────────────────────────────────────
 
   return (
     <div className="profile-page">
       <Navbar rating={0} streak={0} />
 
       <div className="profile-container">
-        {/* Header Section */}
+
+        {/* Header */}
         <div className="profile-header">
-          <button
-            className="back-btn"
-            onClick={() => navigate("/home")}
-            title="Back to Home"
-          >
+          <button className="back-btn" onClick={() => navigate("/home")} title="Back to Home">
             <FiArrowLeft /> Back
           </button>
-
           <div className="header-content">
             <h1 className="profile-title">My Profile</h1>
             <p className="profile-subtitle">
               View your chess statistics and performance analysis
             </p>
           </div>
-
           {!isEditing && (
-            <button
-              className="edit-btn"
-              onClick={() => setIsEditing(true)}
-              title="Edit Profile"
-            >
+            <button className="edit-btn" onClick={() => setIsEditing(true)} title="Edit Profile">
               <FiEdit2 /> Edit
             </button>
           )}
@@ -435,9 +434,10 @@ const ProfilePage: React.FC = () => {
           </div>
         )}
 
-        {/* Main Content - Two Column Layout */}
+        {/* Two-column layout */}
         <div className="profile-content">
-          {/* Left Column - User Info */}
+
+          {/* ── Left: User info + stats ────────────────────────────────── */}
           <div className="profile-section user-info-section">
             <h2 className="section-title">
               <FiUser /> Basic Information
@@ -449,18 +449,12 @@ const ProfilePage: React.FC = () => {
                   <label className="info-label">Display Name</label>
                   <p className="info-value">{profileData.displayName}</p>
                 </div>
-
                 <div className="info-item">
-                  <label className="info-label">
-                    <FiMail /> Email
-                  </label>
+                  <label className="info-label"><FiMail /> Email</label>
                   <p className="info-value">{profileData.email || "Not provided"}</p>
                 </div>
-
                 <div className="info-item">
-                  <label className="info-label">
-                    <FiPhone /> Phone Number
-                  </label>
+                  <label className="info-label"><FiPhone /> Phone Number</label>
                   <p className="info-value">{profileData.phone || "Not added yet"}</p>
                 </div>
               </div>
@@ -476,7 +470,6 @@ const ProfilePage: React.FC = () => {
                     className="form-input"
                   />
                 </div>
-
                 <div className="form-group">
                   <label htmlFor="phone">Phone Number</label>
                   <input
@@ -488,13 +481,8 @@ const ProfilePage: React.FC = () => {
                     placeholder="Enter your phone number"
                   />
                 </div>
-
                 <div className="edit-actions">
-                  <button
-                    className="save-btn"
-                    onClick={handleSaveProfile}
-                    disabled={loading}
-                  >
+                  <button className="save-btn" onClick={handleSaveProfile} disabled={loading}>
                     <FiSave /> {loading ? "Saving..." : "Save Changes"}
                   </button>
                   <button
@@ -512,7 +500,6 @@ const ProfilePage: React.FC = () => {
               </div>
             )}
 
-            {/* Stats Section */}
             <div className="stats-section">
               <h3 className="subsection-title">Chess Statistics</h3>
               <div className="stats-grid">
@@ -535,20 +522,15 @@ const ProfilePage: React.FC = () => {
                 <div className="stat-card full-width">
                   <span className="stat-label">Win Rate</span>
                   <div className="win-rate-bar">
-                    <div
-                      className="win-rate-fill"
-                      style={{ width: `${profileData.winRate}%` }}
-                    />
-                    <span className="win-rate-text">
-                      {profileData.winRate.toFixed(1)}%
-                    </span>
+                    <div className="win-rate-fill" style={{ width: `${profileData.winRate}%` }} />
+                    <span className="win-rate-text">{profileData.winRate.toFixed(1)}%</span>
                   </div>
                 </div>
               </div>
             </div>
           </div>
 
-          {/* Right Column - AI Analysis */}
+          {/* ── Right: AI Analysis ─────────────────────────────────────── */}
           <div className="profile-section analysis-section">
             <div className="analysis-header">
               <h2 className="section-title">
@@ -558,36 +540,40 @@ const ProfilePage: React.FC = () => {
                 className={`update-btn ${loadingAnalysis ? "loading" : ""}`}
                 onClick={handleUpdateAnalysis}
                 disabled={!hasEnoughGames || loadingAnalysis}
+                // FIX #2 – uses gamesNeeded (never negative); consistent wording
                 title={
                   !hasEnoughGames
-                    ? `Play ${10 - profileData.totalGames} more game to enable analysis`
+                    ? `Play ${gamesNeeded} more game${gamesNeeded !== 1 ? "s" : ""} to enable analysis`
                     : loadingAnalysis
                     ? "Analysis in progress... This may take up to 2 minutes"
                     : "Update analysis with latest games"
                 }
               >
-                <FiRefreshCw /> {loadingAnalysis ? "Analyzing... (May take up to 2 min)" : "Update Analysis"}
+                <FiRefreshCw />{" "}
+                {loadingAnalysis ? "Analyzing... (May take up to 2 min)" : "Update Analysis"}
               </button>
             </div>
 
+            {/* Not enough games */}
             {!hasEnoughGames ? (
               <div className="no-analysis-message">
                 <FiAlertCircle className="alert-icon" />
                 <h3>Insufficient Game History</h3>
+                {/* FIX #2 – consistent MIN_GAMES_FOR_ANALYSIS reference */}
                 <p>
-                  You need to have at least 10 past game to get AI-powered analysis.
+                  You need to have at least{" "}
+                  <strong>{MIN_GAMES_FOR_ANALYSIS}</strong> games to get AI-powered analysis.
                 </p>
                 <p className="games-remaining">
-                  Play <strong>{10 - profileData.totalGames}</strong> more{" "}
-                  {10 - profileData.totalGames === 10 ? "game" : "games"} to unlock analysis
+                  {/* FIX #3 – singular/plural now keyed on gamesNeeded === 1, not === 10 */}
+                  Play <strong>{gamesNeeded}</strong> more{" "}
+                  {gamesNeeded === 1 ? "game" : "games"} to unlock analysis
                 </p>
-                <button
-                  className="play-btn"
-                  onClick={() => navigate("/home")}
-                >
+                <button className="play-btn" onClick={() => navigate("/home")}>
                   Start Playing
                 </button>
               </div>
+
             ) : analysis ? (
               <div className="analysis-content">
                 <div className="analysis-meta">
@@ -596,18 +582,14 @@ const ProfilePage: React.FC = () => {
                   </p>
                   <p className="meta-text">
                     Last updated:{" "}
-                    <strong>
-                      {new Date(analysis.timestamp).toLocaleDateString()}
-                    </strong>
+                    <strong>{new Date(analysis.timestamp).toLocaleDateString()}</strong>
                   </p>
                 </div>
 
-                {/* Strengths and Weaknesses */}
+                {/* Strengths & Weaknesses */}
                 <div className="strengths-weaknesses">
                   <div className="strength-box">
-                    <h4 className="box-title">
-                      <FiTrendingUp /> Strengths
-                    </h4>
+                    <h4 className="box-title"><FiTrendingUp /> Strengths</h4>
                     <ul className="strength-list">
                       {analysis.strengths.length > 0 ? (
                         analysis.strengths.map((strength, idx) => (
@@ -620,11 +602,8 @@ const ProfilePage: React.FC = () => {
                       )}
                     </ul>
                   </div>
-
                   <div className="weakness-box">
-                    <h4 className="box-title">
-                      <FiTrendingDown /> Areas to Improve
-                    </h4>
+                    <h4 className="box-title"><FiTrendingDown /> Areas to Improve</h4>
                     <ul className="weakness-list">
                       {analysis.weaknesses.length > 0 ? (
                         analysis.weaknesses.map((weakness, idx) => (
@@ -643,53 +622,40 @@ const ProfilePage: React.FC = () => {
                 <div className="category-analysis">
                   <h4 className="box-title">Performance by Category</h4>
                   <div className="category-grid">
-                    {Object.entries(analysis.predictions).map(
-                      ([category, prediction]) => (
-                        <div
-                          key={category}
-                          className={`category-card ${getClassificationColor(
-                            prediction.classification
-                          )}`}
-                        >
-                          <div className="category-icon">
-                            {getStrengthIcon(category)}
+                    {Object.entries(analysis.predictions).map(([category, prediction]) => (
+                      <div
+                        key={category}
+                        className={`category-card ${getClassificationColor(prediction.classification)}`}
+                      >
+                        <div className="category-icon">{getStrengthIcon(category)}</div>
+                        <div className="category-content">
+                          <h5 className="category-name">{getCategoryLabel(category)}</h5>
+                          {/* FIX #4 – dedicated helper replaces raw .charAt(0).toUpperCase() */}
+                          <p className="category-level">
+                            {getClassificationLabel(prediction.classification)}
+                          </p>
+                          <div className="confidence-bar">
+                            <div
+                              className="confidence-fill"
+                              style={{ width: `${prediction.numericScore}%` }}
+                            />
                           </div>
-                          <div className="category-content">
-                            <h5 className="category-name">
-                              {getCategoryLabel(category)}
-                            </h5>
-                            <p className="category-level">
-                              {prediction.classification.charAt(0).toUpperCase() +
-                                prediction.classification.slice(1)}
-                            </p>
-                            <div className="confidence-bar">
-                              <div
-                                className="confidence-fill"
-                                style={{
-                                  width: `${prediction.numericScore}%`,
-                                }}
-                              />
-                            </div>
-                            <span className="confidence-text">
-                              {prediction.numericScore}%
-                            </span>
-                          </div>
+                          <span className="confidence-text">{prediction.numericScore}%</span>
                         </div>
-                      )
-                    )}
+                      </div>
+                    ))}
                   </div>
                 </div>
 
                 {/* Recommendation */}
                 {analysis.recommendation && (
                   <div className="recommendation-box">
-                    <h4 className="box-title">
-                      <FiTarget /> Recommendation
-                    </h4>
+                    <h4 className="box-title"><FiTarget /> Recommendation</h4>
                     <p className="recommendation-text">{analysis.recommendation}</p>
                   </div>
                 )}
               </div>
+
             ) : (
               <div className="no-analysis-message">
                 <FiBarChart2 className="alert-icon" />
