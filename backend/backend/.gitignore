@@ -1,4 +1,8 @@
-# Sensitive Configuration Files
+# Large AI analysis file
+backend/backend/src/main/java/com/chess4everyone/backend/AI_Models/game_analyses.json
+
+# (Optional) keep all your previous rules as well
+# Sensitive Configs
 application.properties
 application-*.properties
 src/main/resources/application.properties

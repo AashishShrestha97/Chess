@@ -12,6 +12,14 @@ import lombok.NoArgsConstructor;
 /**
  * Response from Python ML API
  * Contains comprehensive player analysis with predictions, strengths, and weaknesses
+ * 
+ * This represents analysis of a player's games using trained ML models:
+ * - opening_model.pkl
+ * - middlegame_model.pkl  
+ * - endgame_model.pkl
+ * - strategy_model.pkl
+ * - tactics_model.pkl
+ * - time_management_model.pkl
  */
 @Data
 @NoArgsConstructor

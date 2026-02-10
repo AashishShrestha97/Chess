@@ -6,6 +6,7 @@ import Navbar from "../components/Navbar/Navbar";
 import "./StandardChessPage.css";
 import gameService from "../api/games";
 import { GameRecorder } from "../utils/gameRecorder";
+import { stockfishService } from "../utils/stockfishService";
 
 // ---------- Types ----------
 interface StandardChessPageProps {
@@ -159,6 +160,27 @@ const StandardChessPage: React.FC<StandardChessPageProps> = ({
     gameRecorderRef.current = new GameRecorder(effectiveTimeControl);
     console.log("📝 Game recorder initialized for:", effectiveTimeControl);
   }, [effectiveTimeControl]);
+
+  // Initialize Stockfish AI Engine at 1200 rating
+  useEffect(() => {
+    const initStockfish = async () => {
+      try {
+        console.log("🚀 Initializing Stockfish AI engine (1200 rating)...");
+        await stockfishService.initialize();
+        console.log("✅ Stockfish ready for 1200-rated gameplay");
+      } catch (error) {
+        console.error("❌ Failed to initialize Stockfish:", error);
+        console.log("⚠️ Will use fallback random AI moves");
+      }
+    };
+
+    initStockfish();
+
+    // Cleanup on unmount
+    return () => {
+      stockfishService.terminate();
+    };
+  }, []);
 
   // ---------- Sound Effects ----------
   const playSound = (soundType: "move" | "capture" | "check" | "gameEnd") => {
@@ -357,12 +379,25 @@ const StandardChessPage: React.FC<StandardChessPageProps> = ({
   ) {
     if (!gameRecorderRef.current) {
       console.warn("⚠️ No game recorder available");
+      setStatusMessage("❌ Error: Game recorder not initialized");
       return;
     }
 
     setIsSavingGame(true);
     try {
       const recorder = gameRecorderRef.current;
+      
+      // Validate moves before saving
+      const validation = recorder.validateMoves();
+      console.log(`🔍 Move Validation: ${validation.message}`);
+      
+      if (!validation.valid) {
+        console.error(`❌ Cannot save game: ${validation.message}`);
+        setStatusMessage(`❌ Error: ${validation.message}`);
+        setIsSavingGame(false);
+        return;
+      }
+
       const movesJson = recorder.getMovesAsJSON();
       const pgn = recorder.generatePGN(
         "You (White)",
@@ -375,6 +410,15 @@ const StandardChessPage: React.FC<StandardChessPageProps> = ({
 
       const gameStats = recorder.getGameStats();
       const accuracy = calculateAccuracy(moveHistory);
+
+      // Log comprehensive game info
+      console.log("📊 Game Statistics:");
+      console.log(`   Total moves (SANs): ${gameStats.totalMoves}`);
+      console.log(`   Full moves: ${gameStats.moveCount}`);
+      console.log(`   PGN length: ${pgn.length} bytes`);
+      console.log(`   Result: ${result}`);
+      console.log(`   Time Control: ${effectiveTimeControl}`);
+      console.log(`   PGN preview: ${pgn.substring(0, 200)}...`);
 
       const savePayload = {
         opponentName: "ChessMaster AI",
@@ -392,7 +436,7 @@ const StandardChessPage: React.FC<StandardChessPageProps> = ({
         accuracyPercentage: accuracy,
       };
 
-      console.log("💾 Saving game...", savePayload);
+      console.log("💾 Saving game to database...");
       const response = await gameService.saveGame(savePayload);
       console.log("✅ Game saved successfully:", response);
 
@@ -416,18 +460,43 @@ const StandardChessPage: React.FC<StandardChessPageProps> = ({
   }
 
   /**
-   * Simple AI with random move selection
-   * You can replace this with a stronger engine if desired
+   * AI Move using Stockfish at 1200 rating level
+   * Skill level 10 = ~1200 rating
+   * Depth 12-15 ensures reasonable thinking time without being too strong
    */
-  function makeAIMove() {
+  async function makeAIMove() {
     if (gameOverRef.current) return;
+    const game = gameRef.current;
+    
+    try {
+      // Use stockfishService for intelligent move
+      const move = await stockfishService.getBestMove(
+        game.fen(),
+        3 // Depth 6 = responsive AI without UI freeze
+      );
+      
+      if (move) {
+        console.log(`🤖 AI plays: ${move.from}${move.to}${move.promotion || ''}`);
+        applyMove(move, "ai");
+      } else {
+        // Fallback to random move if Stockfish fails
+        console.warn("⚠️ Stockfish failed, using fallback move");
+        makeRandomMove();
+      }
+    } catch (error) {
+      console.error("❌ Error in makeAIMove:", error);
+      makeRandomMove();
+    }
+  }
+
+  /**
+   * Fallback: Random move selection
+   */
+  function makeRandomMove() {
     const game = gameRef.current;
     const legalMoves = game.moves();
     if (legalMoves.length === 0) return;
-
-    // Simple random move - you can enhance this with minimax, etc.
-    const randomMove =
-      legalMoves[Math.floor(Math.random() * legalMoves.length)];
+    const randomMove = legalMoves[Math.floor(Math.random() * legalMoves.length)];
     applyMove(randomMove, "ai");
   }
 

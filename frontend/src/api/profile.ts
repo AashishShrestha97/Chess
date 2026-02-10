@@ -85,11 +85,12 @@ export async function getUserGamesAnalysis() {
 
 /**
  * Update user's analysis with latest games
- * Triggers AI model analysis on 10 most recent games
+ * Triggers AI model analysis on the most recent games
  * Uses long timeout (2 minutes) as analysis can take time
+ * @param count Number of recent games to analyze (default: 10)
  */
-export async function updateUserAnalysis() {
-  return httpLongRunning.post<UserGamesAnalysisResponse>("/api/profile/update-analysis", {});
+export async function updateUserAnalysis(count: number = 10) {
+  return httpLongRunning.post<UserGamesAnalysisResponse>("/api/profile/update-analysis", { count });
 }
 
 /**

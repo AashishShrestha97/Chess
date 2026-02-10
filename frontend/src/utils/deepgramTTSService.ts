@@ -41,6 +41,31 @@ class DeepgramTTSService {
 
   constructor() {
     // Initialize audio context lazily
+    // Add one-time listener for user gesture to initialize AudioContext
+    this.setupUserGestureListener();
+  }
+
+  /**
+   * Setup a one-time listener for user gesture to initialize AudioContext
+   * This is required by modern browsers for AudioContext.resume()
+   */
+  private setupUserGestureListener(): void {
+    const initializeWithGesture = async () => {
+      try {
+        await this.ensureAudioContextReady();
+        console.log("✅ AudioContext initialized with user gesture");
+        // Remove listener after successful initialization
+        document.removeEventListener('click', initializeWithGesture);
+        document.removeEventListener('keypress', initializeWithGesture);
+        document.removeEventListener('touchstart', initializeWithGesture);
+      } catch (err) {
+        console.warn("⚠️ Could not initialize AudioContext with gesture:", err);
+      }
+    };
+
+    document.addEventListener('click', initializeWithGesture, { once: true });
+    document.addEventListener('keypress', initializeWithGesture, { once: true });
+    document.addEventListener('touchstart', initializeWithGesture, { once: true });
   }
 
   /**

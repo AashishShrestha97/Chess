@@ -25,12 +25,63 @@ interface MoveAnalysisData {
   quality?: string;
 }
 
+interface DetailedMoveAnalysis {
+  moveNumber: number;
+  plyCount: number;
+  san: string;
+  from?: string;
+  to?: string;
+  promotionPiece?: string;
+  evaluationBefore: number;
+  evaluationAfter: number;
+  evaluationChange: number;
+  brilliant: boolean;
+  excellent: boolean;
+  good: boolean;
+  inaccuracy: boolean;
+  mistake: boolean;
+  blunder: boolean;
+  classification?: string;
+  bestMove?: string;
+  bestMoveEval?: number;
+  secondBestMove?: string;
+  secondBestEval?: number;
+  comment?: string;
+  analysisTimeMs?: number;
+}
+
+interface DetailedGameAnalysis {
+  gameId: number;
+  whitePlayer?: string;
+  blackPlayer?: string;
+  result?: string;
+  opening?: string;
+  totalMoves: number;
+  whiteAccuracy: number;
+  blackAccuracy: number;
+  blunders: number;
+  mistakes: number;
+  inaccuracies: number;
+  moves: DetailedMoveAnalysis[];
+  whiteBlunders?: number;
+  blackBlunders?: number;
+  whiteMistakes?: number;
+  blackMistakes?: number;
+  whiteInaccuracies?: number;
+  blackInaccuracies?: number;
+  keyMoments?: any[];
+  analyzedAt?: string;
+  engine?: string;
+}
+
 const GameReviewPage: React.FC = () => {
   const { gameId } = useParams<{ gameId: string }>();
   const navigate = useNavigate();
 
   const [gameDetail, setGameDetail] = useState<GameDetail | null>(null);
   const [analysis, setAnalysis] = useState<GameAnalysis | null>(null);
+  const [detailedAnalysis, setDetailedAnalysis] = useState<DetailedGameAnalysis | null>(null);
+  const [loadingAnalysis, setLoadingAnalysis] = useState(false);
   const [loading, setLoading] = useState(true);
   const [currentMoveIndex, setCurrentMoveIndex] = useState(0);
   const [fen, setFen] = useState("");
@@ -125,11 +176,28 @@ const GameReviewPage: React.FC = () => {
       } catch (e) {
         console.log("ℹ️ Analysis not available yet:", e);
       }
+
+      // Load detailed Stockfish analysis
+      loadDetailedAnalysis(id);
     } catch (error) {
       console.error("❌ Failed to load game:", error);
       setError(`Error loading game: ${error instanceof Error ? error.message : 'Unknown error'}`);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const loadDetailedAnalysis = async (id: number) => {
+    setLoadingAnalysis(true);
+    try {
+      console.log("🔬 Loading detailed Stockfish analysis...");
+      const detailed = await gameService.getDetailedGameAnalysis(id);
+      console.log("✅ Detailed analysis loaded:", detailed);
+      setDetailedAnalysis(detailed);
+    } catch (error) {
+      console.error("ℹ️ Detailed analysis not available:", error);
+    } finally {
+      setLoadingAnalysis(false);
     }
   };
 
@@ -180,6 +248,20 @@ const GameReviewPage: React.FC = () => {
       BLUNDER: { emoji: "✕", label: "Blunder", color: "#f44336" },
     };
     return badges[quality] || badges["OK"];
+  };
+
+  /**
+   * Get classification from detailed analysis
+   */
+  const getDetailedMoveClassification = (move: DetailedMoveAnalysis | undefined) => {
+    if (!move) return null;
+    if (move.brilliant) return { emoji: "♦", label: "Brilliant", color: "#00d9ff" };
+    if (move.excellent) return { emoji: "✓", label: "Excellent", color: "#4caf50" };
+    if (move.good) return { emoji: "•", label: "Good", color: "#8bc34a" };
+    if (move.blunder) return { emoji: "✕", label: "Blunder", color: "#f44336" };
+    if (move.mistake) return { emoji: "⚡", label: "Mistake", color: "#ff9800" };
+    if (move.inaccuracy) return { emoji: "⚠", label: "Inaccuracy", color: "#ffc107" };
+    return { emoji: "○", label: "Good", color: "#8bc34a" };
   };
 
   const handlePreviousMove = () => {
@@ -359,8 +441,116 @@ const GameReviewPage: React.FC = () => {
               )}
             </div>
 
-            {/* Move Analysis */}
-            {currentMove && moveAnalysisList.length > 0 && moveAnalysisList[currentMoveIndex] && (
+            {/* Move Analysis - Detailed Stockfish */}
+            {currentMove && detailedAnalysis && detailedAnalysis.moves && detailedAnalysis.moves.length > currentMoveIndex && (
+              <div className="gr-move-analysis-card">
+                <h2>🔬 Detailed Move Analysis</h2>
+                <div className="gr-analysis-content">
+                  {(() => {
+                    const moveData = detailedAnalysis.moves[currentMoveIndex];
+                    const classification = getDetailedMoveClassification(moveData);
+                    return (
+                      <>
+                        <div className="gr-move-header">
+                          <div className="gr-move-notation">
+                            <span className="gr-move-number">
+                              {Math.floor(currentMoveIndex / 2) + 1}
+                              {currentMoveIndex % 2 === 0 ? "." : "..."}
+                            </span>
+                            <span className="gr-move-san">{currentMove.san}</span>
+                          </div>
+                          {classification && (
+                            <div
+                              style={{
+                                background: classification.color,
+                                color: "#000",
+                                padding: "6px 12px",
+                                borderRadius: "6px",
+                                fontSize: "14px",
+                                fontWeight: "bold",
+                              }}
+                            >
+                              {classification.emoji} {classification.label}
+                            </div>
+                          )}
+                        </div>
+
+                        {/* Evaluation Display */}
+                        <div style={{ padding: "12px 0", borderTop: "1px solid var(--border-color)" }}>
+                          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px", marginTop: "12px" }}>
+                            <div>
+                              <div style={{ fontSize: "12px", color: "var(--text-secondary)" }}>Before Move</div>
+                              <div style={{ fontSize: "18px", fontWeight: "bold", color: "var(--text-primary)", marginTop: "4px" }}>
+                                {moveData.evaluationBefore > 0 ? "+" : ""}{moveData.evaluationBefore.toFixed(2)}
+                              </div>
+                            </div>
+                            <div>
+                              <div style={{ fontSize: "12px", color: "var(--text-secondary)" }}>After Move</div>
+                              <div style={{ fontSize: "18px", fontWeight: "bold", color: "var(--text-primary)", marginTop: "4px" }}>
+                                {moveData.evaluationAfter > 0 ? "+" : ""}{moveData.evaluationAfter.toFixed(2)}
+                              </div>
+                            </div>
+                          </div>
+
+                          {/* Evaluation Change */}
+                          <div style={{ marginTop: "12px", padding: "10px", backgroundColor: "var(--bg-secondary)", borderRadius: "6px", textAlign: "center" }}>
+                            <div style={{ fontSize: "12px", color: "var(--text-secondary)" }}>Evaluation Change</div>
+                            <div style={{
+                              fontSize: "16px",
+                              fontWeight: "bold",
+                              marginTop: "4px",
+                              color: moveData.evaluationChange > 0 ? "#4caf50" : moveData.evaluationChange < 0 ? "#f44336" : "var(--text-primary)"
+                            }}>
+                              {moveData.evaluationChange > 0 ? "+" : ""}{moveData.evaluationChange.toFixed(2)}
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Best Move */}
+                        {moveData.bestMove && (
+                          <div style={{ marginTop: "12px", paddingTop: "12px", borderTop: "1px solid var(--border-color)" }}>
+                            <div style={{ fontSize: "12px", color: "var(--text-secondary)", marginBottom: "8px" }}>💡 Better Moves</div>
+                            <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
+                              <div style={{
+                                background: "var(--bg-secondary)",
+                                padding: "6px 12px",
+                                borderRadius: "6px",
+                                fontSize: "13px",
+                                fontWeight: "500",
+                                color: "var(--text-primary)"
+                              }}>
+                                {moveData.bestMove}
+                                {moveData.bestMoveEval !== undefined && ` (${moveData.bestMoveEval > 0 ? '+' : ''}${moveData.bestMoveEval.toFixed(2)})`}
+                              </div>
+                              {moveData.secondBestMove && (
+                                <div style={{
+                                  background: "var(--bg-secondary)",
+                                  padding: "6px 12px",
+                                  borderRadius: "6px",
+                                  fontSize: "13px",
+                                  fontWeight: "500",
+                                  color: "var(--text-primary)"
+                                }}>
+                                  {moveData.secondBestMove}
+                                  {moveData.secondBestEval !== undefined && ` (${moveData.secondBestEval > 0 ? '+' : ''}${moveData.secondBestEval.toFixed(2)})`}
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        )}
+
+                        <div style={{ padding: "12px 0", textAlign: "center", color: "var(--text-secondary)", fontSize: "12px", borderTop: "1px solid var(--border-color)", marginTop: "12px" }}>
+                          Move {currentMoveIndex + 1} of {moves.length}
+                        </div>
+                      </>
+                    );
+                  })()}
+                </div>
+              </div>
+            )}
+
+            {/* Move Analysis - Old Format */}
+            {currentMove && moveAnalysisList.length > 0 && moveAnalysisList[currentMoveIndex] && (!detailedAnalysis || !detailedAnalysis.moves || detailedAnalysis.moves.length <= currentMoveIndex) && (
               <div className="gr-move-analysis-card">
                 <h2>Current Move Analysis</h2>
                 <div className="gr-analysis-content">
@@ -426,7 +616,63 @@ const GameReviewPage: React.FC = () => {
             <div className="gr-stats-card">
               <h2>📊 Game Statistics</h2>
               <div className="gr-stats-grid">
-                {analysis ? (
+                {detailedAnalysis ? (
+                  <>
+                    <div className="gr-stat-item">
+                      <div className="gr-stat-label">White Accuracy</div>
+                      <div className="gr-stat-bar">
+                        <div
+                          className="gr-stat-fill"
+                          style={{ width: `${detailedAnalysis.whiteAccuracy ?? 0}%` }}
+                        />
+                      </div>
+                      <div className="gr-stat-value">
+                        {(detailedAnalysis.whiteAccuracy ?? 0).toFixed(1)}%
+                      </div>
+                    </div>
+
+                    <div className="gr-stat-item">
+                      <div className="gr-stat-label">Black Accuracy</div>
+                      <div className="gr-stat-bar">
+                        <div
+                          className="gr-stat-fill"
+                          style={{ width: `${detailedAnalysis.blackAccuracy ?? 0}%` }}
+                        />
+                      </div>
+                      <div className="gr-stat-value">
+                        {(detailedAnalysis.blackAccuracy ?? 0).toFixed(1)}%
+                      </div>
+                    </div>
+
+                    <div className="gr-stat-item">
+                      <div className="gr-stat-label">White Blunders</div>
+                      <div className="gr-stat-count blunder">
+                        {detailedAnalysis.whiteBlunders ?? detailedAnalysis.blunders ?? 0}
+                      </div>
+                    </div>
+
+                    <div className="gr-stat-item">
+                      <div className="gr-stat-label">Black Blunders</div>
+                      <div className="gr-stat-count blunder">
+                        {detailedAnalysis.blackBlunders ?? 0}
+                      </div>
+                    </div>
+
+                    <div className="gr-stat-item">
+                      <div className="gr-stat-label">White Mistakes</div>
+                      <div className="gr-stat-count mistake">
+                        {detailedAnalysis.whiteMistakes ?? 0}
+                      </div>
+                    </div>
+
+                    <div className="gr-stat-item">
+                      <div className="gr-stat-label">Black Mistakes</div>
+                      <div className="gr-stat-count mistake">
+                        {detailedAnalysis.blackMistakes ?? 0}
+                      </div>
+                    </div>
+                  </>
+                ) : analysis ? (
                   <>
                     <div className="gr-stat-item">
                       <div className="gr-stat-label">White Accuracy</div>
@@ -489,9 +735,9 @@ const GameReviewPage: React.FC = () => {
                 )}
               </div>
 
-              {analysis?.openingName && (
+              {(detailedAnalysis?.opening || analysis?.openingName) && (
                 <div className="gr-opening-info">
-                  <h3>📖 Opening: {analysis.openingName}</h3>
+                  <h3>📖 Opening: {detailedAnalysis?.opening || analysis?.openingName}</h3>
                 </div>
               )}
             </div>

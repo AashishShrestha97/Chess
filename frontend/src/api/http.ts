@@ -1,6 +1,6 @@
 import axios from "axios";
 
-const baseURL = import.meta.env.VITE_API_BASE ?? "";
+const baseURL = import.meta.env.VITE_API_BASE ?? "/api";
 
 const http = axios.create({
   baseURL,
@@ -23,6 +23,8 @@ const setupInterceptors = (instance: typeof http) => {
   instance.interceptors.request.use(
     (config) => {
       console.log(`📤 HTTP ${config.method?.toUpperCase()} ${config.url}`);
+      // Ensure API requests are identified as such (for backend to know not to redirect)
+      config.headers['X-Requested-With'] = 'XMLHttpRequest';
       return config;
     },
     (error) => {

@@ -2,6 +2,7 @@ package com.chess4everyone.backend.service.admin;
 
 import java.time.format.DateTimeFormatter;
 import java.util.List;
+import java.util.Map;
 import java.util.stream.Collectors;
 
 import org.springframework.stereotype.Service;
@@ -11,6 +12,7 @@ import com.chess4everyone.backend.dto.admin.CreateUpdateGameModeRequest;
 import com.chess4everyone.backend.dto.admin.GameModeDto;
 import com.chess4everyone.backend.entity.GameMode;
 import com.chess4everyone.backend.repository.GameModeRepository;
+import com.fasterxml.jackson.databind.ObjectMapper;
 
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -21,6 +23,8 @@ import lombok.extern.slf4j.Slf4j;
 public class AdminGameModeService {
     
     private final GameModeRepository gameModeRepository;
+    private final ObjectMapper objectMapper;
+    private final NotificationService notificationService;
     
     /**
      * Get all game modes
@@ -65,6 +69,19 @@ public class AdminGameModeService {
         
         GameMode saved = gameModeRepository.save(gameMode);
         log.info("✅ Game mode created: {}", saved.getId());
+        try {
+            String payload = objectMapper.writeValueAsString(Map.of(
+                "id", saved.getId(),
+                "name", saved.getName(),
+                "displayName", saved.getDisplayName(),
+                "minTimeMinutes", saved.getMinTimeMinutes(),
+                "maxTimeMinutes", saved.getMaxTimeMinutes(),
+                "incrementSeconds", saved.getIncrementSeconds()
+            ));
+            notificationService.createNotification("Game Mode Added", "New game mode '" + saved.getDisplayName() + "' was added.", "GAME_MODE", payload);
+        } catch (Exception e) {
+            log.warn("Could not create notification payload: {}", e.getMessage());
+        }
         return convertToDto(saved);
     }
     
@@ -95,6 +112,19 @@ public class AdminGameModeService {
         
         GameMode updated = gameModeRepository.save(gameMode);
         log.info("✅ Game mode updated: {}", gameModeId);
+        try {
+            String payload = objectMapper.writeValueAsString(Map.of(
+                "id", updated.getId(),
+                "name", updated.getName(),
+                "displayName", updated.getDisplayName(),
+                "minTimeMinutes", updated.getMinTimeMinutes(),
+                "maxTimeMinutes", updated.getMaxTimeMinutes(),
+                "incrementSeconds", updated.getIncrementSeconds()
+            ));
+            notificationService.createNotification("Game Mode Updated", "Game mode '" + updated.getDisplayName() + "' was updated.", "GAME_MODE", payload);
+        } catch (Exception e) {
+            log.warn("Could not create notification payload: {}", e.getMessage());
+        }
         return convertToDto(updated);
     }
     
@@ -105,12 +135,21 @@ public class AdminGameModeService {
     public void deleteGameMode(Long gameModeId) {
         log.warn("🗑️ Deleting game mode ID: {}", gameModeId);
         
-        if (!gameModeRepository.existsById(gameModeId)) {
-            throw new RuntimeException("Game mode not found");
-        }
+        GameMode gm = gameModeRepository.findById(gameModeId)
+            .orElseThrow(() -> new RuntimeException("Game mode not found"));
         
         gameModeRepository.deleteById(gameModeId);
         log.warn("✅ Game mode deleted: {}", gameModeId);
+        try {
+            String payload = objectMapper.writeValueAsString(Map.of(
+                "id", gameModeId,
+                "name", gm.getName(),
+                "displayName", gm.getDisplayName()
+            ));
+            notificationService.createNotification("Game Mode Deleted", "Game mode '" + gm.getDisplayName() + "' was deleted.", "GAME_MODE", payload);
+        } catch (Exception e) {
+            log.warn("Could not create notification payload: {}", e.getMessage());
+        }
     }
     
     /**

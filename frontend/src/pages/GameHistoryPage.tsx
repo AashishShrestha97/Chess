@@ -5,13 +5,29 @@ import gameService, { type RecentGame, type GameDetail, type GameAnalysis } from
 import { exportGamePGN } from "../utils/pgnExporter";
 import "./GameHistoryPage.css";
 
+interface DetailedAnalysis {
+  gameId: number;
+  whiteAccuracy?: number;
+  blackAccuracy?: number;
+  whiteBlunders: number;
+  whiteMistakes: number;
+  whiteInaccuracies: number;
+  blackBlunders: number;
+  blackMistakes: number;
+  blackInaccuracies: number;
+  opening?: string;
+  totalMoves: number;
+}
+
 const GameHistoryPage: React.FC = () => {
   const navigate = useNavigate();
   const [games, setGames] = useState<RecentGame[]>([]);
   const [selectedGame, setSelectedGame] = useState<GameDetail | null>(null);
   const [selectedAnalysis, setSelectedAnalysis] = useState<GameAnalysis | null>(null);
+  const [detailedAnalysis, setDetailedAnalysis] = useState<DetailedAnalysis | null>(null);
   const [loading, setLoading] = useState(false);
   const [loadingAnalysis, setLoadingAnalysis] = useState(false);
+  const [analyzingGame, setAnalyzingGame] = useState(false);
   const [filter, setFilter] = useState<"all" | "wins" | "losses" | "draws">("all");
 
   useEffect(() => {
@@ -49,6 +65,33 @@ const GameHistoryPage: React.FC = () => {
       console.error("❌ Failed to load game detail:", error);
     } finally {
       setLoadingAnalysis(false);
+    }
+  };
+
+  const handleAnalyzeGame = async (gameId: number) => {
+    setAnalyzingGame(true);
+    try {
+      console.log("🔬 Requesting detailed analysis for game:", gameId);
+      const analysis = await gameService.getDetailedGameAnalysis(gameId);
+      console.log("✅ Detailed analysis received:", analysis);
+      setDetailedAnalysis({
+        gameId: analysis.gameId,
+        whiteAccuracy: analysis.whiteAccuracy,
+        blackAccuracy: analysis.blackAccuracy,
+        whiteBlunders: analysis.whiteBlunders,
+        whiteMistakes: analysis.whiteMistakes,
+        whiteInaccuracies: analysis.whiteInaccuracies,
+        blackBlunders: analysis.blackBlunders,
+        blackMistakes: analysis.blackMistakes,
+        blackInaccuracies: analysis.blackInaccuracies,
+        opening: analysis.opening,
+        totalMoves: analysis.totalMoves,
+      });
+    } catch (error) {
+      console.error("❌ Analysis failed:", error);
+      alert("❌ Analysis failed. Make sure Stockfish is installed and the game has valid PGN data.");
+    } finally {
+      setAnalyzingGame(false);
     }
   };
 
@@ -256,6 +299,13 @@ const GameHistoryPage: React.FC = () => {
                       >
                         📊 Full Review
                       </button>
+                      <button
+                        className="gh-analyze-btn"
+                        onClick={() => handleAnalyzeGame(selectedGame.id)}
+                        title="Get detailed Stockfish analysis (like Chess.com)"
+                      >
+                        🔬 Analyze
+                      </button>
                     </div>
                   </div>
 
@@ -316,88 +366,115 @@ const GameHistoryPage: React.FC = () => {
                   </div>
                 </div>
 
-                {/* Analysis Card */}
-                {selectedAnalysis ? (
-                  <div className="gh-analysis-card">
-                    <div className="gh-analysis-header">
-                      <h3>📊 Game Analysis</h3>
+                {/* Detailed Stockfish Analysis Card */}
+                {analyzingGame ? (
+                  <div className="gh-detailed-analysis-card">
+                    <div className="gh-loading-spinner">
+                      <div className="spinner"></div>
+                      <p>🔬 Analyzing game with Stockfish...</p>
                     </div>
-
-                    <div className="gh-accuracy-section">
-                      <div className="gh-accuracy-item">
-                        <div className="gh-accuracy-label">White Accuracy</div>
-                        <div className="gh-accuracy-bar">
-                          <div
-                            className="gh-accuracy-fill"
-                            style={{
-                              width: `${selectedAnalysis.whiteAccuracy ?? 0}%`,
-                            }}
-                          />
-                        </div>
-                        <div className="gh-accuracy-value">
-                          {(selectedAnalysis.whiteAccuracy ?? 0).toFixed(1)}%
-                        </div>
-                      </div>
-
-                      <div className="gh-accuracy-item">
-                        <div className="gh-accuracy-label">Black Accuracy</div>
-                        <div className="gh-accuracy-bar">
-                          <div
-                            className="gh-accuracy-fill"
-                            style={{
-                              width: `${selectedAnalysis.blackAccuracy ?? 0}%`,
-                            }}
-                          />
-                        </div>
-                        <div className="gh-accuracy-value">
-                          {(selectedAnalysis.blackAccuracy ?? 0).toFixed(1)}%
-                        </div>
-                      </div>
-                    </div>
-
-                    <div className="gh-mistakes-section">
-                      <div className="gh-mistakes-col">
-                        <h4>White's Mistakes</h4>
-                        <div className="gh-mistake-count">
-                          <span className="gh-mistake-item">
-                            🔴 Blunders: {selectedAnalysis.whiteBlunders}
-                          </span>
-                          <span className="gh-mistake-item">
-                            🟡 Mistakes: {selectedAnalysis.whiteMistakes}
-                          </span>
-                        </div>
-                      </div>
-                      <div className="gh-mistakes-col">
-                        <h4>Black's Mistakes</h4>
-                        <div className="gh-mistake-count">
-                          <span className="gh-mistake-item">
-                            🔴 Blunders: {selectedAnalysis.blackBlunders}
-                          </span>
-                          <span className="gh-mistake-item">
-                            🟡 Mistakes: {selectedAnalysis.blackMistakes}
-                          </span>
-                        </div>
-                      </div>
-                    </div>
-
-                    {selectedAnalysis.openingName && (
-                      <div className="gh-opening-section">
-                        <h4>📖 Opening</h4>
-                        <p>{selectedAnalysis.openingName}</p>
-                      </div>
-                    )}
                   </div>
-                ) : (
-                  <div className="gh-analysis-card">
+                ) : detailedAnalysis ? (
+                  <div className="gh-detailed-analysis-card">
                     <div className="gh-analysis-header">
-                      <h3>⏳ Analysis Pending</h3>
+                      <h3>🔬 Stockfish Analysis</h3>
                     </div>
-                    <p>
-                      This game's analysis is being generated. Please check back later
-                      for detailed Stockfish evaluation and suggestions.
-                    </p>
+
+                    {/* Accuracy Bars */}
+                    <div className="gh-stockfish-accuracy">
+                      <div className="gh-accuracy-row">
+                        <div className="gh-accuracy-item-stockfish">
+                          <div className="gh-player-label">White</div>
+                          <div className="gh-accuracy-bar-large">
+                            <div
+                              className="gh-accuracy-fill-white"
+                              style={{
+                                width: `${detailedAnalysis.whiteAccuracy ?? 0}%`,
+                              }}
+                            />
+                          </div>
+                          <div className="gh-accuracy-value-large">
+                            {(detailedAnalysis.whiteAccuracy ?? 0).toFixed(1)}%
+                          </div>
+                        </div>
+
+                        <div className="gh-accuracy-item-stockfish">
+                          <div className="gh-player-label">Black</div>
+                          <div className="gh-accuracy-bar-large">
+                            <div
+                              className="gh-accuracy-fill-black"
+                              style={{
+                                width: `${detailedAnalysis.blackAccuracy ?? 0}%`,
+                              }}
+                            />
+                          </div>
+                          <div className="gh-accuracy-value-large">
+                            {(detailedAnalysis.blackAccuracy ?? 0).toFixed(1)}%
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Error Breakdown */}
+                    <div className="gh-error-breakdown">
+                      <div className="gh-error-col">
+                        <h4>♔ White's Performance</h4>
+                        <div className="gh-error-items">
+                          <div className="gh-error-item blunder">
+                            <span className="gh-error-icon">🔴</span>
+                            <span className="gh-error-text">Blunders</span>
+                            <span className="gh-error-count">{detailedAnalysis.whiteBlunders}</span>
+                          </div>
+                          <div className="gh-error-item mistake">
+                            <span className="gh-error-icon">🟠</span>
+                            <span className="gh-error-text">Mistakes</span>
+                            <span className="gh-error-count">{detailedAnalysis.whiteMistakes}</span>
+                          </div>
+                          <div className="gh-error-item inaccuracy">
+                            <span className="gh-error-icon">🟡</span>
+                            <span className="gh-error-text">Inaccuracies</span>
+                            <span className="gh-error-count">{detailedAnalysis.whiteInaccuracies}</span>
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="gh-error-col">
+                        <h4>♚ Black's Performance</h4>
+                        <div className="gh-error-items">
+                          <div className="gh-error-item blunder">
+                            <span className="gh-error-icon">🔴</span>
+                            <span className="gh-error-text">Blunders</span>
+                            <span className="gh-error-count">{detailedAnalysis.blackBlunders}</span>
+                          </div>
+                          <div className="gh-error-item mistake">
+                            <span className="gh-error-icon">🟠</span>
+                            <span className="gh-error-text">Mistakes</span>
+                            <span className="gh-error-count">{detailedAnalysis.blackMistakes}</span>
+                          </div>
+                          <div className="gh-error-item inaccuracy">
+                            <span className="gh-error-icon">🟡</span>
+                            <span className="gh-error-text">Inaccuracies</span>
+                            <span className="gh-error-count">{detailedAnalysis.blackInaccuracies}</span>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Game Stats */}
+                    <div className="gh-stockfish-stats">
+                      {detailedAnalysis.opening && (
+                        <div className="gh-stat-item">
+                          <span className="gh-stat-label">Opening:</span>
+                          <span className="gh-stat-value">{detailedAnalysis.opening}</span>
+                        </div>
+                      )}
+                      <div className="gh-stat-item">
+                        <span className="gh-stat-label">Total Moves:</span>
+                        <span className="gh-stat-value">{detailedAnalysis.totalMoves}</span>
+                      </div>
+                    </div>
                   </div>
-                )}
+                ) : null}
               </>
             ) : (
               <div className="gh-detail-card">

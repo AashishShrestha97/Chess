@@ -28,7 +28,7 @@ import {
 interface CategoryAnalysis {
   classification: "strong" | "average" | "weak";
   confidence: number;
-  numericScore: 0 | 1 | 2;
+  numericScore: number; // 0-100 skill level percentage
 }
 
 interface AnalysisResult {
@@ -121,9 +121,20 @@ const ProfilePage: React.FC = () => {
 
       // Get user's games analysis
       const response = await getUserGamesAnalysis();
+      // Normalize analysis predictions if present
+      const respData: any = response.data || {};
+      if (respData.analysisData) {
+        const rawAnalysis = respData.analysisData;
+        const normalizedPreds = normalizePredictions(rawAnalysis.predictions || rawAnalysis);
+        respData.analysisData = {
+          ...rawAnalysis,
+          predictions: normalizedPreds,
+        };
+      }
+
       setProfileData((prev) => ({
         ...prev,
-        ...response.data,
+        ...respData,
       }));
     } catch (err: any) {
       console.error("Error fetching profile data:", err);
@@ -139,13 +150,37 @@ const ProfilePage: React.FC = () => {
       setError(null);
       setSuccessMessage(null);
 
-      const response = await updateUserAnalysis();
-      setProfileData((prev) => ({
-        ...prev,
-        ...response.data,
-      }));
+      // Call backend to update analysis (which will call ML service and save to DB)
+      // Request analysis over the 10 most recent games
+      const response = await updateUserAnalysis(10);
+      
+      // Transform MLAnalysisResponse to AnalysisResult format
+      if (response.data) {
+        const mlData = response.data as any;
+        
+        // Normalize predictions returned by ML service (handles various field names/formats)
+        const rawPreds = mlData.predictions || mlData || {};
+        const normalizedPreds = normalizePredictions(rawPreds);
 
-      setSuccessMessage("Analysis updated successfully!");
+        const analysisResult: AnalysisResult = {
+          userId: mlData.user_id || mlData.userId || profileData.displayName,
+          timestamp: mlData.timestamp || new Date().toISOString(),
+          gamesAnalyzed: mlData.games_analyzed || mlData.gamesAnalyzed || 0,
+          predictions: normalizedPreds,
+          strengths: mlData.strengths || [],
+          weaknesses: mlData.weaknesses || [],
+          features: mlData.features || {},
+          recommendation: mlData.recommendation || "Keep analyzing games to improve!",
+        };
+
+        setProfileData((prev) => ({
+          ...prev,
+          analysisData: analysisResult,
+          lastAnalysisDate: new Date().toISOString(),
+        }));
+      }
+
+      setSuccessMessage("Analysis updated and saved successfully!");
       setTimeout(() => setSuccessMessage(null), 5000);
     } catch (err: any) {
       console.error("Error updating analysis:", err);
@@ -240,7 +275,7 @@ const ProfilePage: React.FC = () => {
       opening: "Opening",
       middlegame: "Middlegame",
       endgame: "Endgame",
-      tactical: "Tactical",
+      tactical: "Tactics",
       positional: "Positional",
       timeManagement: "Time Management",
     };
@@ -258,6 +293,74 @@ const ProfilePage: React.FC = () => {
       default:
         return "average";
     }
+  };
+
+  // Normalize raw ML prediction data into the AnalysisResult.predictions shape
+  const normalizePredictions = (rawPredictions: any) => {
+    const categories = [
+      "opening",
+      "middlegame",
+      "endgame",
+      "tactical",
+      "positional",
+      "timeManagement",
+    ];
+
+    const mapClassificationFromNumeric = (n: number) => (n === 2 ? "strong" : n === 1 ? "average" : "weak");
+
+    const normalized: any = {};
+
+    for (const cat of categories) {
+      const raw = rawPredictions?.[cat] ?? rawPredictions?.[cat.toLowerCase()] ?? {};
+
+      // numeric score may come in different fields/names
+      let numericScore: number | undefined = raw.numeric_score ?? raw.numericScore ?? raw.score;
+
+      // If numeric score is absent but classification exists, derive numericScore from classification
+      if (numericScore === undefined && typeof raw.classification === "string") {
+        numericScore = raw.classification === "strong" ? 85 : raw.classification === "average" ? 50 : 20;
+      }
+
+      // Default to 50 (average) when nothing present
+      if (numericScore === undefined) numericScore = 50;
+
+      // Clamp to 0-100
+      numericScore = Math.max(0, Math.min(100, numericScore));
+
+      // Derive classification from numeric_score (0-33=weak, 34-66=average, 67-100=strong)
+      let classification: string;
+      if (numericScore <= 33) {
+        classification = "weak";
+      } else if (numericScore <= 66) {
+        classification = "average";
+      } else {
+        classification = "strong";
+      }
+
+      // Override if explicit classification provided
+      if (raw.classification !== undefined) {
+        classification = (raw.classification as any);
+      }
+
+      // Confidence: prefer explicit value; normalize if given as 0-100
+      let confidence: number | null = null;
+      if (raw.confidence !== undefined && raw.confidence !== null) {
+        confidence = Number(raw.confidence) || 0;
+        if (confidence > 1) confidence = Math.min(1, confidence / 100);
+        confidence = Math.max(0, Math.min(1, confidence));
+      } else {
+        // Derive confidence from numeric_score (lower -> less confident, higher -> more confident)
+        confidence = Math.abs(numericScore - 50) / 100 + 0.3; // Range ~0.3-0.8
+      }
+
+      normalized[cat] = {
+        classification,
+        confidence,
+        numericScore: Math.round(numericScore),
+      };
+    }
+
+    return normalized as AnalysisResult["predictions"];
   };
 
   if (!user) {
@@ -284,7 +387,8 @@ const ProfilePage: React.FC = () => {
   }
 
   const analysis = profileData.analysisData;
-  const hasEnoughGames = profileData.totalGames >= 10;
+  // Require at least 1 past game to perform analysis (per new requirement)
+  const hasEnoughGames = profileData.totalGames >= 1;
 
   return (
     <div className="profile-page">
@@ -456,7 +560,7 @@ const ProfilePage: React.FC = () => {
                 disabled={!hasEnoughGames || loadingAnalysis}
                 title={
                   !hasEnoughGames
-                    ? `Play ${10 - profileData.totalGames} more games to enable analysis`
+                    ? `Play ${10 - profileData.totalGames} more game to enable analysis`
                     : loadingAnalysis
                     ? "Analysis in progress... This may take up to 2 minutes"
                     : "Update analysis with latest games"
@@ -471,11 +575,11 @@ const ProfilePage: React.FC = () => {
                 <FiAlertCircle className="alert-icon" />
                 <h3>Insufficient Game History</h3>
                 <p>
-                  You need to play at least 10 games to get AI-powered analysis.
+                  You need to have at least 10 past game to get AI-powered analysis.
                 </p>
                 <p className="games-remaining">
                   Play <strong>{10 - profileData.totalGames}</strong> more{" "}
-                  {10 - profileData.totalGames === 1 ? "game" : "games"} to unlock analysis
+                  {10 - profileData.totalGames === 10 ? "game" : "games"} to unlock analysis
                 </p>
                 <button
                   className="play-btn"
@@ -562,12 +666,12 @@ const ProfilePage: React.FC = () => {
                               <div
                                 className="confidence-fill"
                                 style={{
-                                  width: `${prediction.confidence * 100}%`,
+                                  width: `${prediction.numericScore}%`,
                                 }}
                               />
                             </div>
                             <span className="confidence-text">
-                              {(prediction.confidence * 100).toFixed(0)}%
+                              {prediction.numericScore}%
                             </span>
                           </div>
                         </div>

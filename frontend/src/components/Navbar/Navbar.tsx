@@ -1,8 +1,11 @@
-import React from "react";
+import React, { useState, useEffect } from "react";
 import "./Navbar.css";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../../context/AuthProvider";
+import { getAllNotifications, type NotificationDto } from "../../api/notifications";
+import NotificationCenter from "../NotificationCenter/NotificationCenter";
 import Crown from "../../assets/Crown.png";
+import { FiBell } from "react-icons/fi";
 
 interface NavbarProps {
   rating: number;
@@ -12,6 +15,23 @@ interface NavbarProps {
 const Navbar: React.FC<NavbarProps> = ({ rating, streak }) => {
   const { logout } = useAuth();
   const navigate = useNavigate();
+  const [notificationCenterOpen, setNotificationCenterOpen] = useState(false);
+  const [unreadCount, setUnreadCount] = useState(0);
+
+  useEffect(() => {
+    // Load unread count on mount
+    loadUnreadCount();
+  }, []);
+
+  const loadUnreadCount = async () => {
+    try {
+      const response = await getAllNotifications();
+      const count = (response.data || []).filter((n) => !n.isRead).length;
+      setUnreadCount(count);
+    } catch (err) {
+      console.error("Failed to load unread count:", err);
+    }
+  };
 
   const handleLogout = async () => {
     try {
@@ -56,7 +76,7 @@ const Navbar: React.FC<NavbarProps> = ({ rating, streak }) => {
             </a>
           </div>
 
-          {/* Stats + Accessibility + Logout */}
+          {/* Stats + Notifications + Accessibility + Logout */}
           <div className="nav-stats">
             <div className="streak-badge">
               <span className="streak-icon">🔥</span>
@@ -64,14 +84,34 @@ const Navbar: React.FC<NavbarProps> = ({ rating, streak }) => {
             </div>
 
             <div className="rating-badge">Rating: {rating}</div>
+            
+            {/* Notification Bell */}
+            <div className="notification-bell">
+              <button
+                className="bell-btn"
+                onClick={() => setNotificationCenterOpen(!notificationCenterOpen)}
+                title="Notifications"
+              >
+                <FiBell />
+                {unreadCount > 0 && <span className="unread-badge">{unreadCount}</span>}
+              </button>
+            </div>
+
             <button className="logout-btn" onClick={handleLogout}>
               Logout
             </button>
           </div>
         </div>
       </nav>
+
+      {/* Notification Center Sidebar */}
+      <NotificationCenter 
+        isOpen={notificationCenterOpen} 
+        onClose={() => setNotificationCenterOpen(false)} 
+      />
     </>
   );
 };
 
 export default Navbar;
+

@@ -146,6 +146,22 @@ const gameService = {
       throw error;
     }
   },
+
+  /**
+   * Get detailed Stockfish-based analysis for a game
+   * Returns move-by-move analysis with evaluations (like Chess.com)
+   */
+  async getDetailedGameAnalysis(gameId: number) {
+    console.log("🔬 Requesting detailed Stockfish analysis for game:", gameId);
+    try {
+      const response = await http.post(`/api/games/${gameId}/detailed-analysis`);
+      console.log("✅ Detailed analysis received:", response.data);
+      return response.data;
+    } catch (error) {
+      console.error("❌ Failed to get detailed analysis:", error);
+      throw error;
+    }
+  },
 };
 
 export default gameService;

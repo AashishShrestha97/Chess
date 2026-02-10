@@ -1,0 +1,18 @@
+# Chess Game Analysis and ML Model Dependencies
+
+# Web Framework
+fastapi==0.109.0
+uvicorn==0.27.0
+pydantic==2.5.0
+
+# Chess Analysis
+chess==1.10.0
+
+# Machine Learning & Data Processing
+scikit-learn==1.3.2
+numpy==1.24.3
+pandas==2.0.3
+joblib==1.4.0
+
+# Utilities
+python-dotenv==1.0.0

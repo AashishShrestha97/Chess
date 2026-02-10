@@ -14,8 +14,10 @@ import com.chess4everyone.backend.dto.UserResponse;
 import com.chess4everyone.backend.dto.GameModeStatisticsDto;
 import com.chess4everyone.backend.dto.MLAnalysisResponse;
 import com.chess4everyone.backend.entity.User;
+import com.chess4everyone.backend.entity.PlayerAnalysis;
 import com.chess4everyone.backend.entity.GameMode;
 import com.chess4everyone.backend.repo.UserRepository;
+import com.chess4everyone.backend.repository.PlayerAnalysisRepository;
 import com.chess4everyone.backend.security.JwtService;
 import com.chess4everyone.backend.service.GameAnalysisService;
 import com.chess4everyone.backend.service.ChessMLAnalysisService;
@@ -43,6 +45,7 @@ public class ProfileController {
     private final ChessGameService chessGameService;  // NEW: Game fetching service
     private final GameModeService gameModeService;
     private final GameRepository gameRepository;
+    private final PlayerAnalysisRepository playerAnalysisRepository;  // NEW: For saving analysis
 
     private Long getUserIdFromRequest(HttpServletRequest req) {
         log.debug("🔍 Extracting user ID from request");
@@ -192,7 +195,7 @@ public class ProfileController {
      * Architecture: Frontend → Spring Boot → Python ML Server
      */
     @PostMapping("/update-analysis")
-    public ResponseEntity<?> updateAnalysis(HttpServletRequest req) {
+    public ResponseEntity<?> updateAnalysis(HttpServletRequest req, @RequestBody(required = false) Map<String, Object> body) {
         Long userId = getUserIdFromRequest(req);
         if (userId == null) {
             log.warn("⚠️ Unauthorized update-analysis request");
@@ -205,20 +208,31 @@ public class ProfileController {
             
             log.info("📊 Analysis request for user: {} ({})", userId, user.getName());
             
-            // Check if user has enough games for analysis
-            long gameCount = chessGameService.countGamesWithPGN(user);
-            if (gameCount < 10) {
-                log.warn("⚠️ User {} has only {} games, need at least 10", userId, gameCount);
-                return ResponseEntity.status(400)
-                    .body("Need at least 10 games for analysis. You have " + gameCount);
+            // Determine how many recent games to analyze (default 1)
+            int requestedCount = 1;
+            if (body != null && body.get("count") != null) {
+                try {
+                    requestedCount = Integer.parseInt(String.valueOf(body.get("count")));
+                } catch (NumberFormatException nfe) {
+                    log.warn("⚠️ Invalid count supplied in request body: {}", body.get("count"));
+                    requestedCount = 1;
+                }
             }
-            
+
+            // Check how many games the user actually has
+            long gameCount = chessGameService.countGamesWithPGN(user);
+            if (gameCount < requestedCount) {
+                log.warn("⚠️ User {} has only {} games, requested {} for analysis", userId, gameCount, requestedCount);
+                return ResponseEntity.status(400)
+                    .body("Need at least " + requestedCount + " games for analysis. You have " + gameCount);
+            }
+
             // Call ML microservice to analyze player
-            log.info("🔗 Calling ML microservice for analysis...");
+            log.info("🔗 Calling ML microservice for analysis (games={} )...", requestedCount);
             MLAnalysisResponse mlAnalysis = chessMLAnalysisService.analyzePlayer(
                 user,
                 user.getName(),  // Use user's name as player name
-                10  // Analyze 10 most recent games
+                requestedCount  // Analyze requested number of recent games
             );
             
             if (mlAnalysis == null) {
@@ -231,10 +245,47 @@ public class ProfileController {
             log.info("   Strengths: {}", mlAnalysis.getStrengths().size());
             log.info("   Weaknesses: {}", mlAnalysis.getWeaknesses().size());
             
-            // TODO: Cache the analysis results in PlayerAnalysis table for future retrieval
-            // playerAnalysisRepository.save(playerAnalysis);
+            // Save the analysis results to PlayerAnalysis table for future retrieval
+            try {
+                PlayerAnalysis playerAnalysis = playerAnalysisRepository.findByUser(user)
+                    .orElseGet(() -> {
+                        PlayerAnalysis newAnalysis = new PlayerAnalysis();
+                        newAnalysis.setUser(user);
+                        return newAnalysis;
+                    });
+                
+                // Convert analysis data to JSON and save
+                com.fasterxml.jackson.databind.ObjectMapper mapper = new com.fasterxml.jackson.databind.ObjectMapper();
+                
+                playerAnalysis.setGamesAnalyzed(mlAnalysis.getGamesAnalyzed());
+                playerAnalysis.setStrengths(mapper.writeValueAsString(mlAnalysis.getStrengths()));
+                playerAnalysis.setWeaknesses(mapper.writeValueAsString(mlAnalysis.getWeaknesses()));
+                
+                // Normalize predictions field names for consistent parsing later
+                Map<String, Object> predictions = new java.util.HashMap<>();
+                if (mlAnalysis.getPredictions() != null) {
+                    Map<String, Object> mlPredictions = mapper.convertValue(mlAnalysis.getPredictions(), 
+                        new com.fasterxml.jackson.core.type.TypeReference<Map<String, Object>>() {});
+                    
+                    // Map ML field names to our standard names
+                    predictions.put("opening", mlPredictions.get("opening"));
+                    predictions.put("middlegame", mlPredictions.get("middlegame"));
+                    predictions.put("endgame", mlPredictions.get("endgame"));
+                    predictions.put("tactical", mlPredictions.get("tactical"));
+                    predictions.put("positional", mlPredictions.getOrDefault("positional", mlPredictions.get("strategy")));
+                    predictions.put("timeManagement", mlPredictions.getOrDefault("timeManagement", mlPredictions.get("time_management")));
+                }
+                playerAnalysis.setPredictions(mapper.writeValueAsString(predictions));
+                playerAnalysis.setMetrics(mapper.writeValueAsString(mlAnalysis.getFeatures()));
+                
+                playerAnalysisRepository.save(playerAnalysis);
+                log.info("✅ Analysis saved to database for user: {}", userId);
+            } catch (Exception e) {
+                log.error("⚠️ Failed to save analysis to database: {}", e.getMessage());
+                // Don't fail the request if saving fails, still return the analysis
+            }
             
-            // Return the ML analysis response directly to frontend
+            // Return the ML analysis response to frontend
             return ResponseEntity.ok(mlAnalysis);
             
         } catch (IllegalArgumentException e) {

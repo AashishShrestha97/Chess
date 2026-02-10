@@ -10,6 +10,7 @@ import { GlobalVoiceParser } from "../utils/globalVoiceParser";
 import gameService from "../api/games";
 import { GameRecorder } from "../utils/gameRecorder";
 import beepService from "../utils/beepService";
+import { stockfishService } from "../utils/stockfishService";
 
 // ---------- Types ----------
 interface VoiceGamePageProps {
@@ -168,6 +169,27 @@ const VoiceGamePage: React.FC<VoiceGamePageProps> = ({
     gameRecorderRef.current = new GameRecorder(effectiveTimeControl);
     console.log("📝 Voice game recorder initialized for:", effectiveTimeControl);
   }, [effectiveTimeControl]);
+
+  // Initialize Stockfish AI Engine at 1200 rating
+  useEffect(() => {
+    const initStockfish = async () => {
+      try {
+        console.log("🚀 Initializing Stockfish AI engine for voice game (1200 rating)...");
+        await stockfishService.initialize();
+        console.log("✅ Stockfish ready for voice game at 1200 rating");
+      } catch (error) {
+        console.error("❌ Failed to initialize Stockfish:", error);
+        console.log("⚠️ Will use fallback random AI moves");
+      }
+    };
+
+    initStockfish();
+
+    // Cleanup on unmount
+    return () => {
+      stockfishService.terminate();
+    };
+  }, []);
 
   // ---------- Helpers ----------
 
@@ -452,14 +474,50 @@ const VoiceGamePage: React.FC<VoiceGamePageProps> = ({
     return true;
   }
 
-  function makeAIMove() {
+  /**
+   * AI Move using Stockfish at 1200 rating level
+   * Skill level 10 = ~1200 rating
+   * Depth 12-15 ensures reasonable thinking time without being too strong
+   */
+  async function makeAIMove() {
     if (gameOverRef.current) return;
+    const game = gameRef.current;
+    
+    try {
+      // Use stockfishService for intelligent move
+      const move = await stockfishService.getBestMove(
+        game.fen(),
+        3// Depth 6 = responsive AI without UI freeze
+      );
+      
+      if (move) {
+        const moveStr = `${move.from}${move.to}${move.promotion || ''}`;
+        console.log(`🤖 AI plays: ${moveStr}`);
+        applyMove(move, "ai");
+        
+        // Announce the move via voice
+        const fromSquare = move.from.toUpperCase();
+        const toSquare = move.to.toUpperCase();
+        await speak(`I move ${fromSquare} to ${toSquare}`);
+      } else {
+        // Fallback to random move if Stockfish fails
+        console.warn("⚠️ Stockfish failed, using fallback move");
+        makeRandomMove();
+      }
+    } catch (error) {
+      console.error("❌ Error in makeAIMove:", error);
+      makeRandomMove();
+    }
+  }
+
+  /**
+   * Fallback: Random move selection
+   */
+  function makeRandomMove() {
     const game = gameRef.current;
     const legalMoves = game.moves();
     if (legalMoves.length === 0) return;
-
-    const randomMove =
-      legalMoves[Math.floor(Math.random() * legalMoves.length)];
+    const randomMove = legalMoves[Math.floor(Math.random() * legalMoves.length)];
     applyMove(randomMove, "ai");
   }
 
@@ -502,6 +560,18 @@ const VoiceGamePage: React.FC<VoiceGamePageProps> = ({
     setIsSavingGame(true);
     try {
       const recorder = gameRecorderRef.current;
+      
+      // Validate moves before saving
+      const validation = recorder.validateMoves();
+      console.log(`🔍 Move Validation: ${validation.message}`);
+      
+      if (!validation.valid) {
+        console.error(`❌ Cannot save game: ${validation.message}`);
+        await speak(`Game completed but could not be saved. ${validation.message}`);
+        setIsSavingGame(false);
+        return;
+      }
+
       const movesJson = recorder.getMovesAsJSON();
       const pgn = recorder.generatePGN(
         "You (White)",
@@ -514,6 +584,13 @@ const VoiceGamePage: React.FC<VoiceGamePageProps> = ({
 
       const gameStats = recorder.getGameStats();
       const accuracy = calculateAccuracy(moveHistory);
+
+      // Log comprehensive game info
+      console.log("📊 Voice Game Statistics:");
+      console.log(`   Total moves (SANs): ${gameStats.totalMoves}`);
+      console.log(`   Full moves: ${gameStats.moveCount}`);
+      console.log(`   PGN length: ${pgn.length} bytes`);
+      console.log(`   Result: ${result}`);
 
       const savePayload = {
         opponentName: "ChessMaster AI",
@@ -531,7 +608,7 @@ const VoiceGamePage: React.FC<VoiceGamePageProps> = ({
         accuracyPercentage: accuracy,
       };
 
-      console.log("💾 Saving voice game...", savePayload);
+      console.log("💾 Saving voice game to database...");
       const response = await gameService.saveGame(savePayload);
       console.log("✅ Voice game saved successfully:", response);
       await speak("Game saved to your database");

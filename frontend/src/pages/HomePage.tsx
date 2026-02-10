@@ -15,6 +15,7 @@ import deepgramVoiceCommandService from "../utils/deepgramVoiceCommandService";
 import deepgramTTSService from "../utils/deepgramTTSService";
 import Navbar from "../components/Navbar/Navbar";
 import { GlobalVoiceParser } from "../utils/globalVoiceParser";
+import { getAllNotifications, type NotificationDto } from "../api/notifications";
 import "./HomePage.css";
 
 /* =========================================================
@@ -847,7 +848,7 @@ const CommandItem: React.FC<CommandItemProps> = ({ text, example }) => {
 };
 
 /* =========================================================
-   HomePage main component - OPTIMIZED VERSION
+   HomePage main component - WITH NOTIFICATION VOICE ANNOUNCEMENTS
    ========================================================= */
 
 const HomePage: React.FC = () => {
@@ -872,7 +873,67 @@ const HomePage: React.FC = () => {
   const pendingTimeRef = useRef<TimeControl | null>(null);
   const isNavigatingRef = useRef(false);
 
-  // ✅ OPTIMIZED: Single useEffect for welcome + voice initialization
+  // ✅ NEW: Function to fetch and announce notifications
+  const fetchAndAnnounceNotifications = async () => {
+    try {
+      console.log("🔔 Fetching notifications...");
+      const response = await getAllNotifications();
+      const notifications = response.data;
+      
+      // Filter unread notifications
+      const unreadNotifications = notifications.filter((n: NotificationDto) => !n.isRead);
+      
+      if (unreadNotifications.length === 0) {
+        console.log("✅ No new notifications");
+        return;
+      }
+
+      console.log(`🔔 Found ${unreadNotifications.length} unread notification(s)`);
+
+      // Create notification announcement message
+      let notificationMessage = "";
+      
+      if (unreadNotifications.length === 1) {
+        const notif = unreadNotifications[0];
+        notificationMessage = `You have 1 new notification. ${notif.title}. ${notif.message}`;
+      } else {
+        notificationMessage = `You have ${unreadNotifications.length} new notifications. `;
+        
+        // Announce first 3 notifications to avoid overwhelming the user
+        const notificationsToAnnounce = unreadNotifications.slice(0, 3);
+        notificationsToAnnounce.forEach((notif: NotificationDto, index: number) => {
+          notificationMessage += `${index + 1}. ${notif.title}. ${notif.message}. `;
+        });
+        
+        if (unreadNotifications.length > 3) {
+          notificationMessage += `And ${unreadNotifications.length - 3} more notifications.`;
+        }
+      }
+
+      // Speak the notification announcement
+      console.log("🔊 Announcing notifications...");
+      await deepgramTTSService.speak({
+        text: notificationMessage,
+        rate: 1.0,
+        volume: 0.9,
+        priority: "high",
+        onStart: () => {
+          console.log("▶️ Notification announcement started");
+        },
+        onEnd: () => {
+          console.log("✅ Notification announcement completed");
+        },
+        onError: (err) => {
+          console.warn("⚠️ Notification announcement error:", err);
+        },
+      });
+
+    } catch (error) {
+      console.error("❌ Failed to fetch/announce notifications:", error);
+    }
+  };
+
+  // ✅ OPTIMIZED: Single useEffect for welcome + notifications + voice initialization
   useEffect(() => {
     const initializeVoiceAndWelcome = async () => {
       if (welcomePlayedRef.current) {
@@ -889,11 +950,10 @@ const HomePage: React.FC = () => {
         console.log("✅ Deepgram services initialized");
       } catch (e) {
         console.warn("⚠️ Failed to initialize Deepgram:", e);
-        // Don't auto-start STT if initialization fails
         return;
       }
 
-      // ✅ Step 2: Play ULTRA-SHORT welcome message (reduced from 600+ chars to ~80 chars)
+      // ✅ Step 2: Play welcome message
       const welcomeText = `Welcome to Chess for Everyone! Say "show commands" to see what you can do, or say "start voice chess" to begin.`;
 
       console.log("🔊 Playing welcome message...");
@@ -907,53 +967,46 @@ const HomePage: React.FC = () => {
           onStart: () => {
             console.log("▶️ Welcome message started");
           },
-          onEnd: () => {
+          onEnd: async () => {
             console.log("✅ Welcome message completed");
 
-            // ✅ Step 3: Start voice recognition after a brief pause for user to process
+            // ✅ Step 3: Check and announce notifications AFTER welcome message
+            await fetchAndAnnounceNotifications();
+
+            // ✅ Step 4: Start voice recognition after notifications
             setTimeout(() => {
               if (!deepgramVoiceCommandService.isActive()) {
-                console.log("🎤 Starting voice recognition after welcome...");
+                console.log("🎤 Starting voice recognition after welcome and notifications...");
                 startVoiceListening();
               }
-            }, 1500); // 1.5 second buffer to let user process what was said
+            }, 1500);
           },
           onError: (err) => {
             console.warn("⚠️ Welcome speech error:", err);
-            // ❌ DO NOT auto-start STT if TTS fails
-            // User must manually click "Voice On" button
             console.log("ℹ️ TTS failed - voice commands NOT auto-started");
-            console.log(
-              "ℹ️ Click 'Voice On' button to enable voice commands manually"
-            );
           },
         });
       } catch (e) {
         console.error("❌ Welcome speech failed:", e);
-        // ❌ DO NOT auto-start STT if TTS fails
-        // User must manually click "Voice On" button
         console.log("ℹ️ TTS failed - voice commands NOT auto-started");
-        console.log(
-          "ℹ️ Click 'Voice On' button to enable voice commands manually"
-        );
       }
     };
 
     initializeVoiceAndWelcome();
 
-    // ✅ Cleanup on unmount - SINGLE cleanup function
+    // ✅ Cleanup on unmount
     return () => {
       console.log("🧹 HomePage unmounting - cleaning up voice services");
       deepgramTTSService.stop();
       deepgramVoiceCommandService.stopListening();
     };
-  }, []); // Run once on mount
+  }, []);
 
   const startVoiceListening = () => {
     console.log("🎤 Starting voice listening...");
 
     deepgramVoiceCommandService.startListening({
-      language: "en-IN", // Indian English for South Asian accents
+      language: "en-IN",
       onListeningStart: () => {
         setIsVoiceActive(true);
         console.log("🎤 Voice commands active");
@@ -981,7 +1034,6 @@ const HomePage: React.FC = () => {
     if (!text || !text.trim()) return;
 
     try {
-      // Pause voice listening while TTS speaks
       if (deepgramVoiceCommandService.isActive()) {
         deepgramVoiceCommandService.pauseListening();
       }
@@ -992,7 +1044,6 @@ const HomePage: React.FC = () => {
         volume: 0.8,
       });
 
-      // Resume voice listening after TTS completes
       if (welcomePlayedRef.current && deepgramVoiceCommandService.isActive()) {
         deepgramVoiceCommandService.resumeListening();
       }
@@ -1134,7 +1185,6 @@ const HomePage: React.FC = () => {
     setSelectedTime(time);
     pendingTimeRef.current = time;
 
-    // Always close modal when time is picked
     setTimeModalOpen(false);
 
     const mode = selectedMode || pendingModeRef.current;

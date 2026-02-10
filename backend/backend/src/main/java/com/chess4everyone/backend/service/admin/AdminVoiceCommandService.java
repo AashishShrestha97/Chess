@@ -2,6 +2,7 @@ package com.chess4everyone.backend.service.admin;
 
 import java.time.format.DateTimeFormatter;
 import java.util.List;
+import java.util.Map;
 import java.util.stream.Collectors;
 
 import org.springframework.stereotype.Service;
@@ -23,6 +24,7 @@ public class AdminVoiceCommandService {
     
     private final VoiceCommandRepository voiceCommandRepository;
     private final ObjectMapper objectMapper;
+    private final NotificationService notificationService;
     
     /**
      * Get all voice commands
@@ -75,6 +77,17 @@ public class AdminVoiceCommandService {
         
         VoiceCommand saved = voiceCommandRepository.save(command);
         log.info("✅ Voice command created: {}", saved.getId());
+        try {
+            String payload = objectMapper.writeValueAsString(Map.of(
+                "id", saved.getId(),
+                "commandName", saved.getCommandName(),
+                "patterns", convertJsonToPatterns(saved.getPatterns()),
+                "intent", saved.getIntent()
+            ));
+            notificationService.createNotification("Voice Command Added", "New voice command '" + saved.getCommandName() + "' was added.", "VOICE_COMMAND", payload);
+        } catch (Exception e) {
+            log.warn("Could not create notification payload: {}", e.getMessage());
+        }
         return convertToDto(saved);
     }
     
@@ -103,6 +116,17 @@ public class AdminVoiceCommandService {
         
         VoiceCommand updated = voiceCommandRepository.save(command);
         log.info("✅ Voice command updated: {}", commandId);
+        try {
+            String payload = objectMapper.writeValueAsString(Map.of(
+                "id", updated.getId(),
+                "commandName", updated.getCommandName(),
+                "patterns", convertJsonToPatterns(updated.getPatterns()),
+                "intent", updated.getIntent()
+            ));
+            notificationService.createNotification("Voice Command Updated", "Voice command '" + updated.getCommandName() + "' was updated.", "VOICE_COMMAND", payload);
+        } catch (Exception e) {
+            log.warn("Could not create notification payload: {}", e.getMessage());
+        }
         return convertToDto(updated);
     }
     
@@ -113,12 +137,20 @@ public class AdminVoiceCommandService {
     public void deleteVoiceCommand(Long commandId) {
         log.warn("🗑️ Deleting voice command ID: {}", commandId);
         
-        if (!voiceCommandRepository.existsById(commandId)) {
-            throw new RuntimeException("Voice command not found");
-        }
+        VoiceCommand command = voiceCommandRepository.findById(commandId)
+            .orElseThrow(() -> new RuntimeException("Voice command not found"));
         
         voiceCommandRepository.deleteById(commandId);
         log.warn("✅ Voice command deleted: {}", commandId);
+        try {
+            String payload = objectMapper.writeValueAsString(Map.of(
+                "id", commandId,
+                "commandName", command.getCommandName()
+            ));
+            notificationService.createNotification("Voice Command Deleted", "Voice command '" + command.getCommandName() + "' was deleted.", "VOICE_COMMAND", payload);
+        } catch (Exception e) {
+            log.warn("Could not create notification payload: {}", e.getMessage());
+        }
     }
     
     /**
@@ -135,6 +167,17 @@ public class AdminVoiceCommandService {
         VoiceCommand updated = voiceCommandRepository.save(command);
         
         log.info("✅ Voice command status toggled: {} -> {}", commandId, updated.getActive());
+        try {
+            String payload = objectMapper.writeValueAsString(Map.of(
+                "id", updated.getId(),
+                "commandName", updated.getCommandName(),
+                "active", updated.getActive()
+            ));
+            String title = updated.getActive() ? "Voice Command Enabled" : "Voice Command Disabled";
+            notificationService.createNotification(title, "Voice command '" + updated.getCommandName() + "' is now " + (updated.getActive() ? "enabled" : "disabled") + ".", "VOICE_COMMAND", payload);
+        } catch (Exception e) {
+            log.warn("Could not create notification payload: {}", e.getMessage());
+        }
         return convertToDto(updated);
     }
     

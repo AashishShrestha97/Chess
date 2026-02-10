@@ -65,33 +65,42 @@ public class ChessGameService {
         List<MLGameData> mlGames = games.stream()
             .filter(g -> {
                 if (g.getPgn() == null) {
-                    log.warn("Filtering out game: PGN is null");
+                    System.out.println("⚠️ Filtering out game ID " + g.getId() + ": PGN is null (result: " + g.getResult() + ", opponent: " + g.getOpponentName() + ")");
                     return false;
                 }
                 if (g.getPgn().trim().isEmpty()) {
-                    log.warn("Filtering out game: PGN is empty");
+                    System.out.println("⚠️ Filtering out game ID " + g.getId() + ": PGN is empty (result: " + g.getResult() + ", opponent: " + g.getOpponentName() + ")");
                     return false;
                 }
                 // Check for minimum PGN length - be lenient
                 if (g.getPgn().length() < 50) {
-                    log.warn("Filtering out game: PGN too short ({} bytes)", g.getPgn().length());
+                    System.out.println("⚠️ Filtering out game ID " + g.getId() + ": PGN too short (" + g.getPgn().length() + " bytes, result: " + g.getResult() + ", opponent: " + g.getOpponentName() + ")");
                     return false;
                 }
-                // Count approximate moves - accept even incomplete games
-                int moveCount = g.getPgn().split("\\d+\\.").length - 1;
-                if (moveCount < 2) {
-                    log.warn("Filtering out game: Too few moves ({}) - games need at least 2 moves", moveCount);
+                
+                // Better move counting: look for actual chess moves (includes algebraic notation like e4, Nf3, etc)
+                // This regex looks for move numbers followed by moves
+                int moveCount = 0;
+                java.util.regex.Pattern movePattern = java.util.regex.Pattern.compile("\\d+\\.\\s*([A-Za-z0-9\\-=+#]+)");
+                java.util.regex.Matcher matcher = movePattern.matcher(g.getPgn());
+                while (matcher.find()) {
+                    moveCount++;
+                }
+                
+                // Accept games with at least 1 move (was 2, now 1)
+                if (moveCount < 1) {
+                    System.out.println("⚠️ Filtering out game ID " + g.getId() + ": Too few moves (" + moveCount + ", result: " + g.getResult() + ", opponent: " + g.getOpponentName() + ", PGN: " + g.getPgn().substring(0, Math.min(100, g.getPgn().length())) + ")");
                     return false;
                 }
+                System.out.println("✅ Keeping game ID " + g.getId() + ": PGN length=" + g.getPgn().length() + " bytes, moves=" + moveCount);
                 return true;
             })
             .map(g -> new MLGameData(g.getPgn()))
             .collect(Collectors.toList());
         
-        log.info("Converted {} out of {} games to ML format", mlGames.size(), games.size());
+        System.out.println("📊 Converted " + mlGames.size() + " out of " + games.size() + " games to ML format for user " + user.getId());
         if (mlGames.size() < games.size()) {
-            log.warn("⚠️ {} games were filtered out (null/empty/incomplete PGN)", 
-                games.size() - mlGames.size());
+            System.out.println("⚠️ " + (games.size() - mlGames.size()) + " games were filtered out (null/empty/incomplete PGN)");
         }
         return mlGames;
     }
@@ -126,9 +135,18 @@ public class ChessGameService {
      * @return Number of games with valid PGN
      */
     public long countGamesWithPGN(User user) {
-        return gameRepository.findByUserOrderByPlayedAtDesc(user)
-            .stream()
+        List<Game> allGames = gameRepository.findByUserOrderByPlayedAtDesc(user);
+        long gamesWithPGN = allGames.stream()
             .filter(g -> g.getPgn() != null && !g.getPgn().trim().isEmpty())
             .count();
+        
+        // Log detailed info about games without PGN
+        allGames.stream()
+            .filter(g -> g.getPgn() == null || g.getPgn().trim().isEmpty())
+            .forEach(g -> System.out.println("⚠️ Game ID " + g.getId() + " missing PGN (result: " + g.getResult() + ", opponent: " + g.getOpponentName() + ")"));
+        
+        System.out.println("📊 User " + user.getName() + " has " + allGames.size() + " total games, " + gamesWithPGN + " with valid PGN");
+        
+        return gamesWithPGN;
     }
 }

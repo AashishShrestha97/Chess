@@ -28,18 +28,21 @@ public class SecurityConfig {
     private final OAuth2SuccessHandler oauth2SuccessHandler;
     private final CorsConfigurationSource corsConfigurationSource;
     private final ClientRegistrationRepository clientRegistrationRepository;
+    private final RestAuthenticationEntryPoint restAuthenticationEntryPoint;
 
     public SecurityConfig(
             JwtAuthenticationFilter jwtAuthFilter,
             CustomOAuth2UserService oauth2UserService,
             OAuth2SuccessHandler oauth2SuccessHandler,
             CorsConfigurationSource corsConfigurationSource,
-            ClientRegistrationRepository clientRegistrationRepository) {
+            ClientRegistrationRepository clientRegistrationRepository,
+            RestAuthenticationEntryPoint restAuthenticationEntryPoint) {
         this.jwtAuthFilter = jwtAuthFilter;
         this.oauth2UserService = oauth2UserService;
         this.oauth2SuccessHandler = oauth2SuccessHandler;
         this.corsConfigurationSource = corsConfigurationSource;
         this.clientRegistrationRepository = clientRegistrationRepository;
+        this.restAuthenticationEntryPoint = restAuthenticationEntryPoint;
     }
 
     @Bean
@@ -55,6 +58,11 @@ public class SecurityConfig {
             .sessionManagement(session -> 
                 session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
             
+            // Handle authentication exceptions - return 401 for API requests
+            .exceptionHandling(exceptionHandling ->
+                exceptionHandling.authenticationEntryPoint(restAuthenticationEntryPoint)
+            )
+            
             // Authorization rules
             .authorizeHttpRequests(auth -> auth
                 .requestMatchers(
@@ -62,6 +70,7 @@ public class SecurityConfig {
                     "/api/auth/login",
                     "/api/auth/refresh",
                     "/api/deepgram/**",
+                    "/api/notifications/**",  // ✅ FIXED: Allow notifications without auth
                     "/oauth2/**",
                     "/login/oauth2/**"
                 ).permitAll()

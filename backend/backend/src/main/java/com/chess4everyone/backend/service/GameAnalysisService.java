@@ -176,7 +176,8 @@ public class GameAnalysisService {
      */
     private AnalysisResultDto callPythonAIApi(User user, List<Game> games) {
         try {
-            log.debug("🔌 Calling Python API at: {}", aiApiUrl);
+            log.info("🔌 Calling Python API at: {}", aiApiUrl);
+            log.info("   Games to send: {}", games.size());
             
             // Prepare request with PGN games
             Map<String, Object> request = new HashMap<>();
@@ -197,6 +198,7 @@ public class GameAnalysisService {
             headers.setContentType(MediaType.APPLICATION_JSON);
             HttpEntity<Map<String, Object>> httpRequest = new HttpEntity<>(request, headers);
             
+            log.info("📤 Sending request to ML API...");
             Map<String, Object> response = restTemplate.postForObject(
                     aiApiUrl,
                     httpRequest,
@@ -204,11 +206,18 @@ public class GameAnalysisService {
             );
             
             if (response == null) {
-                log.warn("⚠ Empty response from Python API");
+                log.error("⚠ Empty response from Python API (null)");
                 return null;
             }
             
-            log.debug("✓ Received response from Python API");
+            log.info("✅ Received response from Python API");
+            log.info("   Response keys: {}", response.keySet());
+            if (response.containsKey("categories")) {
+                log.info("   Found 'categories' array (test app format)");
+            }
+            if (response.containsKey("predictions")) {
+                log.info("   Found 'predictions' field");
+            }
             
             // Convert response to AnalysisResultDto
             return parsePythonApiResponse(response);
@@ -221,24 +230,131 @@ public class GameAnalysisService {
     
     /**
      * Parse Python API response and convert to AnalysisResultDto
+     * Handles both formats: predictions map OR categories array (test app format)
      */
     @SuppressWarnings("unchecked")
     private AnalysisResultDto parsePythonApiResponse(Map<String, Object> response) {
         try {
             String userId = (String) response.get("user_id");
-            String timestamp = (String) response.get("timestamp");
-            Integer gamesAnalyzed = ((Number) response.get("games_analyzed")).intValue();
+            if (userId == null) userId = "0";
             
-            // Parse predictions
-            Map<String, Object> predictionsMap = (Map<String, Object>) response.get("predictions");
+            String timestamp = (String) response.get("timestamp");
+            if (timestamp == null) timestamp = java.time.Instant.now().toString();
+            
+            Integer gamesAnalyzed = 1;
+            Object gamesObj = response.get("games_analyzed");
+            if (gamesObj != null && gamesObj instanceof Number) {
+                gamesAnalyzed = ((Number) gamesObj).intValue();
+            }
+            
+            log.info("📊 Parsing API response: user={}, games={}, timestamp={}", userId, gamesAnalyzed, timestamp);
             
             Map<String, Map<String, Object>> predictions = new HashMap<>();
-            for (String key : predictionsMap.keySet()) {
-                Object val = predictionsMap.get(key);
-                if (val instanceof Map) {
-                    predictions.put(key, (Map<String, Object>) val);
+
+            // FIRST: Check for top-level "categories" array (from test app)
+            if (response.containsKey("categories") && response.get("categories") instanceof List) {
+                log.info("📋 Converting test app 'categories' array to predictions map");
+                List<?> categories = (List<?>) response.get("categories");
+                
+                for (Object item : categories) {
+                    if (!(item instanceof Map)) continue;
+                    Map<String, Object> catItem = (Map<String, Object>) item;
+                    
+                    // Extract category name
+                    Object catNameObj = catItem.get("category");
+                    if (catNameObj == null) catNameObj = catItem.get("name");
+                    if (catNameObj == null) continue;
+                    
+                    String catName = String.valueOf(catNameObj).trim().toLowerCase();
+                    
+                    // Normalize category name
+                    String catKey = normalizeCategoryKey(catName);
+                    
+                    // Extract score (0-4 scale in test app)
+                    Integer scoreVal = null;
+                    Object scoreObj = catItem.get("score");
+                    if (scoreObj instanceof Number) {
+                        scoreVal = ((Number) scoreObj).intValue();
+                    }
+                    
+                    // Extract classification
+                    String classification = (String) catItem.getOrDefault("classification", "average");
+                    
+                    // Convert score 0-4 to numeric_score 0-2 and confidence 0-1
+                    Integer numericScore = 1;  // default to average
+                    Double confidence = 0.5;   // default confidence
+                    
+                    if (scoreVal != null && scoreVal >= 0) {
+                        // Test app uses: 0=poor, 1=weak, 2=average, 3=good, 4=excellent
+                        // We need: 0=weak, 1=average, 2=strong
+                        if (scoreVal >= 3) {
+                            numericScore = 2;  // strong
+                            confidence = Math.min(1.0, (scoreVal / 4.0));  // 0.75 or 1.0
+                        } else if (scoreVal == 2) {
+                            numericScore = 1;  // average
+                            confidence = 0.5;
+                        } else {
+                            numericScore = 0;  // weak
+                            confidence = Math.max(0.0, (scoreVal / 4.0));  // 0.0 to 0.5
+                        }
+                    }
+                    
+                    // Build prediction entry
+                    Map<String, Object> predEntry = new HashMap<>();
+                    predEntry.put("classification", classification);
+                    predEntry.put("confidence", confidence);
+                    predEntry.put("numeric_score", numericScore);
+                    
+                    predictions.put(catKey, predEntry);
+                    log.debug("   {}: score={} -> numericScore={}, confidence={}", catKey, scoreVal, numericScore, confidence);
+                }
+            } 
+            // SECOND: Check for "predictions" map (standard format)
+            else if (response.containsKey("predictions") && response.get("predictions") instanceof Map) {
+                log.info("📊 Using 'predictions' map from response");
+                Map<String, Object> predictionsMap = (Map<String, Object>) response.get("predictions");
+                for (String key : predictionsMap.keySet()) {
+                    Object val = predictionsMap.get(key);
+                    if (val instanceof Map) {
+                        predictions.put(key, (Map<String, Object>) val);
+                    }
+                }
+            } 
+            // THIRD: Check for "predictions" array
+            else if (response.containsKey("predictions") && response.get("predictions") instanceof List) {
+                log.info("📋 Converting 'predictions' array to map");
+                List<?> predList = (List<?>) response.get("predictions");
+                for (Object item : predList) {
+                    if (!(item instanceof Map)) continue;
+                    Map<String, Object> itemMap = (Map<String, Object>) item;
+                    Object catObj = itemMap.get("category");
+                    if (catObj == null) catObj = itemMap.get("name");
+                    if (catObj == null) continue;
+                    
+                    String catKey = normalizeCategoryKey(String.valueOf(catObj).trim().toLowerCase());
+                    Object classification = itemMap.get("classification");
+                    Object scoreObj = itemMap.get("score");
+
+                    Integer numericScore = null;
+                    Double confidence = null;
+                    if (scoreObj instanceof Number) {
+                        int scoreVal = ((Number) scoreObj).intValue();
+                        if (scoreVal >= 3) numericScore = 2;
+                        else if (scoreVal == 2) numericScore = 1;
+                        else numericScore = 0;
+                        confidence = Math.max(0.0, Math.min(1.0, scoreVal / 4.0));
+                    }
+
+                    Map<String, Object> predEntry = new HashMap<>();
+                    if (classification != null) predEntry.put("classification", classification);
+                    if (confidence != null) predEntry.put("confidence", confidence);
+                    if (numericScore != null) predEntry.put("numeric_score", numericScore);
+
+                    predictions.put(catKey, predEntry);
                 }
             }
+            
+            log.info("✅ Parsed predictions: {} categories found", predictions.size());
             
             // Build CategoryAnalysisDto for each prediction
             PredictionsDto preds = new PredictionsDto(
@@ -247,12 +363,15 @@ public class GameAnalysisService {
                     parseCategoryPrediction(predictions.get("endgame")),
                     parseCategoryPrediction(predictions.get("tactical")),
                     parseCategoryPrediction(predictions.get("positional")),
-                    parseCategoryPrediction(predictions.get("time_management"))
+                    parseCategoryPrediction(predictions.get("timemanagement"))
             );
             
             // Parse strengths and weaknesses
             List<String> strengths = (List<String>) response.get("strengths");
+            if (strengths == null) strengths = new ArrayList<>();
+            
             List<String> weaknesses = (List<String>) response.get("weaknesses");
+            if (weaknesses == null) weaknesses = new ArrayList<>();
             
             // Parse features
             Map<String, Double> features = new HashMap<>();
@@ -267,6 +386,7 @@ public class GameAnalysisService {
             }
             
             String recommendation = (String) response.get("recommendation");
+            if (recommendation == null) recommendation = "Keep improving!";
             
             return new AnalysisResultDto(
                     userId,
@@ -281,8 +401,23 @@ public class GameAnalysisService {
             
         } catch (Exception e) {
             log.error("Error parsing Python API response: {}", e.getMessage(), e);
+            e.printStackTrace();
             return null;
         }
+    }
+    
+    /**
+     * Normalize category key names to standard format
+     */
+    private String normalizeCategoryKey(String categoryName) {
+        String lower = categoryName.toLowerCase().trim();
+        if (lower.contains("opening")) return "opening";
+        if (lower.contains("middle")) return "middlegame";
+        if (lower.contains("endgame")) return "endgame";
+        if (lower.contains("tactic")) return "tactical";
+        if (lower.contains("position") || lower.contains("strategy")) return "positional";
+        if (lower.contains("time")) return "timemanagement";
+        return lower;
     }
     
     /**
@@ -290,16 +425,53 @@ public class GameAnalysisService {
      */
     @SuppressWarnings("unchecked")
     private CategoryAnalysisDto parseCategoryPrediction(Map<String, Object> predMap) {
-        if (predMap == null) {
-            // Return default average classification
+        try {
+            if (predMap == null) {
+                // Return default average classification
+                return new CategoryAnalysisDto("average", 0.5, 1);
+            }
+
+            // classification may be under different keys or be null
+            Object clsObj = predMap.getOrDefault("classification", predMap.get("class"));
+            String classification = clsObj != null ? String.valueOf(clsObj) : "average";
+
+            // confidence may be 0..1 or 0..100 (or missing)
+            Double confidence = 0.5;
+            Object confObj = predMap.get("confidence");
+            if (confObj == null) confObj = predMap.get("conf");
+            if (confObj != null) {
+                try {
+                    double c = Double.parseDouble(String.valueOf(confObj));
+                    if (c > 1.0) c = Math.min(100.0, c) / 100.0;
+                    confidence = Math.max(0.0, Math.min(1.0, c));
+                } catch (Exception e) {
+                    // keep default
+                }
+            }
+
+            // numeric score may be under several keys
+            Integer numericScore = 1;
+            Object numObj = predMap.get("numeric_score");
+            if (numObj == null) numObj = predMap.get("numericScore");
+            if (numObj == null) numObj = predMap.get("score");
+            if (numObj != null) {
+                try {
+                    numericScore = ((Number) numObj).intValue();
+                } catch (Exception e) {
+                    try { numericScore = Integer.parseInt(String.valueOf(numObj)); } catch (Exception ex) { /* ignore */ }
+                }
+            } else {
+                // derive from classification
+                if ("strong".equalsIgnoreCase(classification) || "excellent".equalsIgnoreCase(classification)) numericScore = 2;
+                else if ("average".equalsIgnoreCase(classification)) numericScore = 1;
+                else numericScore = 0;
+            }
+
+            return new CategoryAnalysisDto(classification, confidence, numericScore);
+        } catch (Exception e) {
+            log.warn("Failed to parse category prediction: {}", e.getMessage());
             return new CategoryAnalysisDto("average", 0.5, 1);
         }
-        
-        String classification = (String) predMap.get("classification");
-        Double confidence = ((Number) predMap.get("confidence")).doubleValue();
-        Integer numericScore = ((Number) predMap.get("numeric_score")).intValue();
-        
-        return new CategoryAnalysisDto(classification, confidence, numericScore);
     }
     
     /**

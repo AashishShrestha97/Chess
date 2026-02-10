@@ -9,14 +9,18 @@ import lombok.NoArgsConstructor;
 /**
  * Category prediction from ML model
  * Represents performance in a specific chess aspect (opening, middlegame, etc.)
+ * 
+ * Classification levels: "excellent", "good", "average", "weak"
+ * Confidence: 0.0 (no confidence) to 1.0 (100% confidence)
+ * Numeric score: 0-100 (scale for UI display)
  */
 @Data
 @NoArgsConstructor
 @AllArgsConstructor
 public class MLCategoryPrediction {
-    private String classification;  // "strong", "average", or "weak"
+    private String classification;  // "excellent", "good", "average", or "weak"
     private Double confidence;      // Confidence level 0.0-1.0
     
     @JsonProperty("numeric_score")
-    private Integer numericScore;   // 0=weak, 1=average, 2=strong
+    private Integer numericScore;   // 0-100 for visualization
 }
