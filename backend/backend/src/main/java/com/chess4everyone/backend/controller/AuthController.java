@@ -81,6 +81,56 @@ public class AuthController {
         }
     }
 
+    @GetMapping("/token")
+public ResponseEntity<?> getToken(HttpServletRequest req) {
+    String token = null;
+    if (req.getCookies() != null) {
+        for (Cookie c : req.getCookies()) {
+            if ("ch4e_access".equals(c.getName())) {
+                token = c.getValue();
+                break;
+            }
+        }
+    }
+    if (token == null) return ResponseEntity.status(401).body("No token");
+    return ResponseEntity.ok(Map.of("token", token));
+}
+
+@GetMapping("/ws-token")
+    public ResponseEntity<?> wsToken(HttpServletRequest req) {
+        try {
+            String subject = null;
+            if (req.getCookies() != null) {
+                for (Cookie c : req.getCookies()) {
+                    if ("ch4e_access".equals(c.getName())) {
+                        try {
+                            subject = jwtService.parseToken(c.getValue()).getBody().getSubject();
+                        } catch (Exception ignored) {}
+                    }
+                }
+            }
+
+            if (subject == null) {
+                return ResponseEntity.status(401).body(Map.of("error", "Not authenticated"));
+            }
+
+            User u = userRepo.findById(Long.valueOf(subject))
+                    .orElseThrow(() -> new RuntimeException("User not found"));
+
+            // Issue a 5-minute access token (same format, shorter lived)
+            String wsToken = jwtService.generateAccessToken(
+                u.getId().toString(),
+                Map.of("email", u.getEmail(), "name", u.getName())
+            );
+
+            return ResponseEntity.ok(Map.of("token", wsToken));
+
+        } catch (Exception e) {
+            System.out.println("❌ ws-token error: " + e.getMessage());
+            return ResponseEntity.status(500).body(Map.of("error", "Internal error"));
+        }
+    }
+
     @PostMapping("/login")
     public ResponseEntity<?> login(@Valid @RequestBody LoginRequest req, HttpServletResponse res) {
         try {

@@ -63,19 +63,21 @@ public class SecurityConfig {
                 exceptionHandling.authenticationEntryPoint(restAuthenticationEntryPoint)
             )
             
-            // Authorization rules
-            .authorizeHttpRequests(auth -> auth
-                .requestMatchers(
-                    "/api/auth/register",
-                    "/api/auth/login",
-                    "/api/auth/refresh",
-                    "/api/deepgram/**",
-                    "/api/notifications/**",  // ✅ FIXED: Allow notifications without auth
-                    "/oauth2/**",
-                    "/login/oauth2/**"
-                ).permitAll()
-                .anyRequest().authenticated()
-            )
+.authorizeHttpRequests(auth -> auth
+    .requestMatchers(
+        "/api/auth/register",
+        "/api/auth/login",
+        "/api/auth/refresh",
+        "/api/deepgram/**",
+        "/api/auth/ws-token",   // ← add this line
+        "/api/notifications/**",
+        "/api/matchmaking",      // ← ADD
+        "/api/game/**",          // ← ADD (WS auth via token param)
+        "/oauth2/**",
+        "/login/oauth2/**"
+    ).permitAll()
+    .anyRequest().authenticated()
+)
             
             // OAuth2 login with custom authorization request resolver
             .oauth2Login(oauth2 -> oauth2

@@ -17,6 +17,8 @@ import "./App.css";
 import VoiceGamePage from "./pages/VoiceGamePage";
 import StandardChessPage from "./pages/StandardChessPage";
 import SettingsPage from "./pages/SettingsPage";
+import MatchmakingPage from "./pages/MatchmakingPage";
+import MultiplayerChessPage from "./pages/MultiplayerChessPage";
 
 const App: React.FC = () => {
   return (
@@ -36,6 +38,11 @@ const App: React.FC = () => {
         <Route path="/settings" element={<ProtectedRoute><SettingsPage /></ProtectedRoute>} />
         <Route path="/game-history" element={<ProtectedRoute><GameHistoryPage /></ProtectedRoute>} />
         <Route path="/game-review/:gameId" element={<ProtectedRoute><GameReviewPage /></ProtectedRoute>} />
+
+        {/* Multiplayer routes */}
+        <Route path="/matchmaking" element={<ProtectedRoute><MatchmakingPage /></ProtectedRoute>} />
+        <Route path="/classicchess/multiplayer" element={<ProtectedRoute><MultiplayerChessPage /></ProtectedRoute>} />
+        <Route path="/voicechess/multiplayer" element={<ProtectedRoute><MultiplayerChessPage /></ProtectedRoute>} />
       </Routes>
     </BrowserRouter>
   );

@@ -1,0 +1,265 @@
+.mp-chess-page {
+  min-height: 100vh;
+  background: #1a1a1a;
+  color: #fff;
+  padding-bottom: 40px;
+}
+
+.mp-back-row {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  padding: 16px 24px;
+  border-bottom: 1px solid #2a2a2a;
+}
+
+.mp-back-btn {
+  background: transparent;
+  border: 1px solid #3a3a3a;
+  color: #aaa;
+  padding: 8px 16px;
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 0.9rem;
+  transition: all 0.2s;
+}
+
+.mp-back-btn:hover { background: #2a2a2a; color: #fff; }
+
+.mp-game-info {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.mp-time-badge {
+  background: rgba(255, 215, 0, 0.15);
+  border: 1px solid rgba(255, 215, 0, 0.3);
+  color: #ffd700;
+  padding: 4px 12px;
+  border-radius: 999px;
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+
+.mp-status {
+  color: #aaa;
+  font-size: 0.95rem;
+}
+
+.mp-main-layout {
+  display: grid;
+  grid-template-columns: auto 320px;
+  gap: 24px;
+  padding: 24px;
+  max-width: 1200px;
+  margin: 0 auto;
+}
+
+.mp-left-column {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.mp-player-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  background: #242424;
+  border: 1px solid #333;
+  border-radius: 12px;
+  transition: border-color 0.3s;
+}
+
+.mp-player-card.low-time {
+  border-color: rgba(244, 67, 54, 0.5);
+  background: rgba(244, 67, 54, 0.05);
+}
+
+.mp-player-info {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.mp-avatar {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.2rem;
+  font-weight: 700;
+}
+
+.mp-avatar.me { background: rgba(76, 175, 80, 0.2); color: #4caf50; }
+.mp-avatar.opponent { background: rgba(255, 152, 0, 0.2); color: #ff9800; }
+
+.mp-player-name {
+  font-weight: 600;
+  font-size: 0.95rem;
+}
+
+.mp-player-color {
+  font-size: 0.8rem;
+  color: #888;
+}
+
+.mp-clock {
+  font-size: 1.6rem;
+  font-weight: 700;
+  font-family: monospace;
+  color: #fff;
+  transition: color 0.3s;
+}
+
+.mp-clock.low { color: #ff9800; }
+.mp-clock.critical { color: #f44336; animation: blink 0.5s infinite; }
+
+@keyframes blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
+.mp-board-wrapper { /* nothing needed */ }
+
+.mp-controls {
+  display: flex;
+  gap: 10px;
+}
+
+.mp-ctrl-btn {
+  flex: 1;
+  padding: 10px;
+  background: #2a2a2a;
+  border: 1px solid #3a3a3a;
+  color: #fff;
+  border-radius: 10px;
+  cursor: pointer;
+  font-size: 0.9rem;
+  transition: all 0.2s;
+}
+
+.mp-ctrl-btn:hover { background: #333; }
+.mp-ctrl-btn.danger { border-color: rgba(244, 67, 54, 0.4); }
+.mp-ctrl-btn.danger:hover { background: rgba(244, 67, 54, 0.1); }
+.mp-ctrl-btn:disabled { opacity: 0.5; cursor: default; }
+
+/* Right column */
+.mp-right-column {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.mp-draw-offer {
+  background: rgba(255, 215, 0, 0.1);
+  border: 1px solid rgba(255, 215, 0, 0.3);
+  border-radius: 12px;
+  padding: 16px;
+  text-align: center;
+}
+
+.mp-draw-offer p {
+  margin: 0 0 12px;
+  font-weight: 600;
+}
+
+.mp-draw-btns {
+  display: flex;
+  gap: 10px;
+}
+
+.mp-draw-accept, .mp-draw-decline {
+  flex: 1;
+  padding: 10px;
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+  font-weight: 600;
+  font-size: 0.9rem;
+}
+
+.mp-draw-accept { background: #4caf50; color: #fff; }
+.mp-draw-decline { background: #f44336; color: #fff; }
+
+.mp-game-over-card {
+  background: #242424;
+  border: 1px solid #3a3a3a;
+  border-radius: 16px;
+  padding: 24px;
+  text-align: center;
+}
+
+.mp-game-over-icon { font-size: 3rem; margin-bottom: 8px; }
+.mp-game-over-text {
+  font-size: 1.4rem;
+  font-weight: 700;
+  margin-bottom: 16px;
+}
+
+.mp-new-game-btn {
+  padding: 12px 24px;
+  background: linear-gradient(135deg, #ffd700, #ffb700);
+  color: #1a1a1a;
+  border: none;
+  border-radius: 10px;
+  cursor: pointer;
+  font-weight: 700;
+  font-size: 0.95rem;
+}
+
+.mp-move-history {
+  background: #242424;
+  border: 1px solid #333;
+  border-radius: 12px;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.mp-panel-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px 16px;
+  border-bottom: 1px solid #333;
+  font-weight: 600;
+  font-size: 0.9rem;
+}
+
+.mp-move-count { color: #888; font-size: 0.85rem; }
+
+.mp-moves-list {
+  padding: 8px;
+  overflow-y: auto;
+  max-height: 400px;
+}
+
+.mp-move-row {
+  display: grid;
+  grid-template-columns: 32px 1fr 1fr;
+  gap: 4px;
+  padding: 4px 8px;
+  border-radius: 6px;
+  font-size: 0.9rem;
+}
+
+.mp-move-row:nth-child(even) { background: rgba(255,255,255,0.02); }
+
+.mp-move-num { color: #666; font-size: 0.85rem; }
+.mp-move.white { color: #e8d9b9; font-weight: 500; }
+.mp-move.black { color: #b58863; font-weight: 500; }
+.mp-empty { color: #555; text-align: center; padding: 20px; font-size: 0.9rem; }
+
+@media (max-width: 900px) {
+  .mp-main-layout {
+    grid-template-columns: 1fr;
+    padding: 16px;
+  }
+  .mp-right-column { order: -1; }
+}

@@ -7,30 +7,45 @@ import org.springframework.web.socket.config.annotation.WebSocketConfigurer;
 import org.springframework.web.socket.config.annotation.WebSocketHandlerRegistry;
 
 import com.chess4everyone.backend.websocket.DeepgramSTTWebSocketHandler;
+import com.chess4everyone.backend.websocket.GameWebSocketHandler;
+import com.chess4everyone.backend.websocket.MatchmakingWebSocketHandler;
 
 /**
- * WebSocket configuration for Deepgram STT proxy.
- *
- * Frontend connects to:
- *   ws://localhost:8080/api/deepgram/listen
- * and this handler proxies that connection to Deepgram's WSS endpoint.
+ * WebSocket configuration for:
+ *  - Deepgram STT proxy  →  /api/deepgram/listen
+ *  - Matchmaking         →  /api/matchmaking
+ *  - Live game           →  /api/game/{gameId}
  */
 @Configuration
 @EnableWebSocket
 public class WebSocketConfig implements WebSocketConfigurer {
 
     private final DeepgramSTTWebSocketHandler deepgramSTTWebSocketHandler;
+    private final MatchmakingWebSocketHandler matchmakingWebSocketHandler;
+    private final GameWebSocketHandler gameWebSocketHandler;
 
-    // Spring injects the @Component handler so @Value fields are populated
-    public WebSocketConfig(DeepgramSTTWebSocketHandler deepgramSTTWebSocketHandler) {
+    public WebSocketConfig(
+            DeepgramSTTWebSocketHandler deepgramSTTWebSocketHandler,
+            MatchmakingWebSocketHandler matchmakingWebSocketHandler,
+            GameWebSocketHandler gameWebSocketHandler) {
         this.deepgramSTTWebSocketHandler = deepgramSTTWebSocketHandler;
+        this.matchmakingWebSocketHandler = matchmakingWebSocketHandler;
+        this.gameWebSocketHandler = gameWebSocketHandler;
     }
 
     @Override
     public void registerWebSocketHandlers(@NonNull WebSocketHandlerRegistry registry) {
+        // Deepgram STT proxy
         registry.addHandler(deepgramSTTWebSocketHandler, "/api/deepgram/listen")
-                // You can restrict this to your frontend origin(s) if you want:
-                // .setAllowedOrigins("http://localhost:5173")
+                .setAllowedOrigins("*");
+
+        // Matchmaking — pair players waiting for the same time control
+        registry.addHandler(matchmakingWebSocketHandler, "/api/matchmaking")
+                .setAllowedOrigins("*");
+
+        // Live game — handles moves, draw offers, resign, clock sync
+        // The path pattern /api/game/* matches /api/game/1, /api/game/42, etc.
+        registry.addHandler(gameWebSocketHandler, "/api/game/*")
                 .setAllowedOrigins("*");
     }
 }
