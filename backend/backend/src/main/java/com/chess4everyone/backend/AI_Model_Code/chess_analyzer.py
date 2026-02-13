@@ -1,11 +1,12 @@
 """
-Chess Game Analyzer using Stockfish - OPTIMIZED FOR TRAINING
-=============================================================
-Improvements over original:
-1. Silent mode option (no debug prints during batch processing)
-2. Better error handling for corrupted games
-3. More efficient CP loss capping
-4. Mate score handling improvements
+Chess Game Analyzer using Stockfish - ULTRA DETERMINISTIC VERSION
+==================================================================
+Maximum determinism fixes:
+1. Fixed depth priority (depth ONLY, no time limit during search)
+2. Single-threaded enforcement
+3. Deterministic hash configuration
+4. Consistent rounding at every step
+5. Position cache to ensure same positions get same evals
 """
 
 import chess
@@ -16,6 +17,7 @@ import io
 import re
 from dataclasses import dataclass
 import numpy as np
+import hashlib
 
 
 @dataclass
@@ -63,27 +65,52 @@ class ChessAnalyzer:
     MISTAKE_THRESHOLD = 100
     BLUNDER_THRESHOLD = 200
     BRILLIANT_GAIN = 50
-    MAX_CP_LOSS = 500  # Cap for mate scenarios
+    MAX_CP_LOSS = 500
 
+    # ULTRA DETERMINISM SETTINGS - depth ONLY, no time variance
+    ANALYSIS_DEPTH = 20  # Higher depth for stability
+    
     def __init__(self, stockfish_path: str = "/usr/games/stockfish", silent: bool = False):
         """
-        Initialize analyzer
-        
-        Args:
-            stockfish_path: Path to Stockfish executable
-            silent: If True, suppress debug output (useful for batch processing)
+        Initialize analyzer with MAXIMUM deterministic settings
         """
         self.stockfish_path = stockfish_path
         self.engine = None
         self.silent = silent
+        # Position evaluation cache for perfect consistency
+        self.eval_cache: Dict[str, Tuple[float, str]] = {}
 
     def __enter__(self):
         self.engine = chess.engine.SimpleEngine.popen_uci(self.stockfish_path)
+        
+        # CRITICAL: Configure for maximum determinism
+        try:
+            # Force single thread
+            self.engine.configure({"Threads": 1})
+            # Small fixed hash
+            self.engine.configure({"Hash": 16})
+            # Disable any strength limitations that might add randomness
+            self.engine.configure({"UCI_LimitStrength": False})
+            
+            if not self.silent:
+                print("🔒 Stockfish configured for DETERMINISTIC analysis")
+                print(f"   - Threads: 1")
+                print(f"   - Hash: 16 MB")
+                print(f"   - Analysis depth: {self.ANALYSIS_DEPTH}")
+                
+        except Exception as e:
+            if not self.silent:
+                print(f"⚠️ Could not configure engine settings: {e}")
+        
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
         if self.engine:
             self.engine.quit()
+
+    def _get_position_hash(self, board: chess.Board) -> str:
+        """Create deterministic hash of position for caching"""
+        return hashlib.md5(board.fen().encode()).hexdigest()
 
     def _get_game_phase(self, board: chess.Board, move_number: int) -> str:
         num_pieces = len(board.piece_map())
@@ -96,29 +123,30 @@ class ChessAnalyzer:
 
     def _eval_to_centipawns(self, eval_info, perspective_white: bool = True) -> float:
         """
-        Convert evaluation to centipawns, capping mate scores
+        Convert evaluation to centipawns with STRICT rounding
         """
         if eval_info.is_mate():
-            # Cap mate scores to avoid extreme values
             mate_moves = eval_info.mate()
             if mate_moves > 0:
-                score = min(10000, 10000)  # Positive mate
+                score = 10000.0
             else:
-                score = max(-10000, -10000)  # Negative mate
+                score = -10000.0
         else:
-            score = eval_info.score()
+            score = float(eval_info.score())
         
         if not perspective_white:
             score = -score
-        return score
+        
+        # Round to nearest integer for maximum consistency
+        return float(round(score))
 
     def _classify_move(self, cp_loss: float, eval_before: float, eval_after: float) -> Dict[str, bool]:
         """
-        Classify move quality with improved logic
+        Classify move quality with STRICT thresholds
         """
-        # Cap cp_loss for classification
-        cp_loss = min(cp_loss, self.MAX_CP_LOSS)
-        eval_gain = eval_after - eval_before
+        # Ensure inputs are rounded
+        cp_loss = float(round(min(cp_loss, self.MAX_CP_LOSS)))
+        eval_gain = float(round(eval_after - eval_before))
 
         is_brilliant = eval_gain >= self.BRILLIANT_GAIN
         is_best = cp_loss <= self.BEST_THRESHOLD
@@ -136,13 +164,30 @@ class ChessAnalyzer:
             'is_blunder': is_blunder,
         }
 
-    def analyze_position(self, board: chess.Board, time_limit: float = 0.1) -> Tuple[float, str]:
-        """Analyze a single position"""
+    def analyze_position(self, board: chess.Board) -> Tuple[float, str]:
+        """
+        Analyze position with PERFECT CACHING for determinism
+        """
+        # Check cache first
+        pos_hash = self._get_position_hash(board)
+        if pos_hash in self.eval_cache:
+            return self.eval_cache[pos_hash]
+        
         try:
-            info = self.engine.analyse(board, chess.engine.Limit(time=time_limit))
+            # CRITICAL: Use ONLY depth limit, no time limit
+            # This ensures exact same search every time
+            info = self.engine.analyse(
+                board, 
+                chess.engine.Limit(depth=self.ANALYSIS_DEPTH)
+            )
             eval_cp = self._eval_to_centipawns(info["score"].white(), perspective_white=True)
             best_move = info.get("pv", [None])[0]
-            return eval_cp, (best_move.uci() if best_move else "")
+            result = (eval_cp, (best_move.uci() if best_move else ""))
+            
+            # Cache the result
+            self.eval_cache[pos_hash] = result
+            return result
+            
         except Exception as e:
             if not self.silent:
                 print(f"⚠️ Position analysis error: {e}")
@@ -150,14 +195,7 @@ class ChessAnalyzer:
 
     def analyze_game(self, pgn_string: str, player_name: str) -> Optional[GameAnalysis]:
         """
-        Analyze a complete game
-        
-        Args:
-            pgn_string: PGN notation of the game
-            player_name: Name of the player to analyze
-            
-        Returns:
-            GameAnalysis object or None if analysis fails
+        Analyze a complete game with MAXIMUM determinism
         """
         if not self.engine:
             raise RuntimeError("Engine not initialized. Use 'with' statement.")
@@ -179,11 +217,10 @@ class ChessAnalyzer:
         elif player_name.lower() in black_player.lower():
             player_color = "black"
         else:
-            player_color = "white"  # Default
+            player_color = "white"
 
         result = game.headers.get("Result", "*")
 
-        # Clock tracking
         prev_clock_white: Optional[float] = None
         prev_clock_black: Optional[float] = None
 
@@ -198,12 +235,10 @@ class ChessAnalyzer:
                 move = node.move
                 is_white_move = board.turn == chess.WHITE
 
-                # Extract clock
                 current_clock = node.clock()
                 if current_clock is None:
                     current_clock = _parse_clk(node.comment)
 
-                # Compute time spent
                 time_spent: Optional[float] = None
                 if current_clock is not None:
                     prev = prev_clock_white if is_white_move else prev_clock_black
@@ -215,7 +250,6 @@ class ChessAnalyzer:
                     else:
                         prev_clock_black = current_clock
 
-                # Only analyze player's moves
                 if (player_color == "white" and is_white_move) or \
                    (player_color == "black" and not is_white_move):
 
@@ -230,11 +264,13 @@ class ChessAnalyzer:
                     if player_color == "black":
                         eval_after = -eval_after
 
-                    # Calculate and cap CP loss
-                    cp_loss = max(0, eval_before - eval_after)
+                    # Round everything strictly
+                    eval_before = float(round(eval_before))
+                    eval_after = float(round(eval_after))
+                    cp_loss = max(0.0, eval_before - eval_after)
                     cp_loss = min(cp_loss, self.MAX_CP_LOSS)
+                    cp_loss = float(round(cp_loss))
                     
-                    # Track abnormal evals (for debugging only)
                     if abs(eval_before) > 1000 or abs(eval_after) > 1000:
                         abnormal_count += 1
                     
@@ -259,13 +295,13 @@ class ChessAnalyzer:
         except Exception as e:
             if not self.silent:
                 print(f"⚠️ Error during move analysis: {e}")
-            # Return partial analysis if we got some moves
             if len(moves_analysis) < 5:
                 return None
 
-        # Only print warnings if not in silent mode and there are issues
-        if not self.silent and abnormal_count > 0:
-            print(f"⚠️ {abnormal_count} moves with extreme evals (mate scenarios) - capped at {self.MAX_CP_LOSS}cp")
+        if not self.silent:
+            if abnormal_count > 0:
+                print(f"⚠️ {abnormal_count} moves with extreme evals (capped at {self.MAX_CP_LOSS}cp)")
+            print(f"📦 Cache size: {len(self.eval_cache)} unique positions")
 
         if len(moves_analysis) == 0:
             return None
@@ -278,7 +314,7 @@ class ChessAnalyzer:
         )
 
     def analyze_multiple_games(self, pgn_games: List[str], player_name: str) -> List[GameAnalysis]:
-        """Analyze multiple games"""
+        """Analyze multiple games with shared cache for consistency"""
         analyses = []
         for i, pgn in enumerate(pgn_games):
             try:
@@ -286,7 +322,7 @@ class ChessAnalyzer:
                 if analysis:
                     analyses.append(analysis)
                     if not self.silent:
-                        print(f"Analyzed game {i+1}/{len(pgn_games)}")
+                        print(f"Analyzed game {i+1}/{len(pgn_games)} - Cache: {len(self.eval_cache)} positions")
             except Exception as e:
                 if not self.silent:
                     print(f"Error analyzing game {i+1}: {e}")
@@ -296,14 +332,7 @@ class ChessAnalyzer:
 
 def extract_features(game_analyses: List, silent: bool = False) -> Dict[str, float]:
     """
-    Extract performance features as RATES (0.0–1.0)
-    
-    Args:
-        game_analyses: List of GameAnalysis objects
-        silent: If True, suppress output
-        
-    Returns:
-        Dictionary of feature values
+    Extract features with MAXIMUM precision control
     """
     if not game_analyses:
         return {
@@ -335,16 +364,24 @@ def extract_features(game_analyses: List, silent: bool = False) -> Dict[str, flo
 
     features = {}
 
-    # Core features (CP loss already capped in analysis)
-    raw_cp_losses = [m.centipawn_loss for m in all_moves]
+    # Ultra-precise rounding helper
+    def ultra_round(value, decimals=6):
+        """Round with maximum precision for consistency"""
+        # Use Decimal for exact rounding
+        from decimal import Decimal, ROUND_HALF_UP
+        d = Decimal(str(value))
+        return float(d.quantize(Decimal(10) ** -decimals, rounding=ROUND_HALF_UP))
+
+    # Core features
+    raw_cp_losses = [float(m.centipawn_loss) for m in all_moves]
     
-    features['avg_cp_loss'] = np.mean(raw_cp_losses)
-    features['blunder_rate'] = sum(1 for m in all_moves if m.is_blunder) / total_moves
-    features['mistake_rate'] = sum(1 for m in all_moves if m.is_mistake) / total_moves
-    features['inaccuracy_rate'] = sum(1 for m in all_moves if m.is_inaccuracy) / total_moves
-    features['brilliant_moves'] = sum(1 for m in all_moves if m.is_brilliant) / total_moves
-    features['best_moves'] = sum(1 for m in all_moves if m.is_best) / total_moves
-    features['good_moves'] = sum(1 for m in all_moves if m.is_good) / total_moves
+    features['avg_cp_loss'] = ultra_round(np.mean(raw_cp_losses))
+    features['blunder_rate'] = ultra_round(sum(1 for m in all_moves if m.is_blunder) / total_moves)
+    features['mistake_rate'] = ultra_round(sum(1 for m in all_moves if m.is_mistake) / total_moves)
+    features['inaccuracy_rate'] = ultra_round(sum(1 for m in all_moves if m.is_inaccuracy) / total_moves)
+    features['brilliant_moves'] = ultra_round(sum(1 for m in all_moves if m.is_brilliant) / total_moves)
+    features['best_moves'] = ultra_round(sum(1 for m in all_moves if m.is_best) / total_moves)
+    features['good_moves'] = ultra_round(sum(1 for m in all_moves if m.is_good) / total_moves)
 
     # Time management
     moves_with_time = [m for m in all_moves if getattr(m, 'time_spent', None) is not None]
@@ -352,7 +389,7 @@ def extract_features(game_analyses: List, silent: bool = False) -> Dict[str, flo
     if moves_with_time:
         time_spents = [m.time_spent for m in moves_with_time]
         avg_time = np.mean(time_spents)
-        features['avg_move_time'] = avg_time
+        features['avg_move_time'] = ultra_round(avg_time)
 
         rush_threshold = avg_time / 3.0
         pressure_count = 0
@@ -362,49 +399,36 @@ def extract_features(game_analyses: List, silent: bool = False) -> Dict[str, flo
             rushed = m.time_spent < rush_threshold and m.time_spent < 2.0
             if clock_low or rushed:
                 pressure_count += 1
-        features['time_pressure_moves'] = pressure_count / len(moves_with_time)
+        features['time_pressure_moves'] = ultra_round(pressure_count / len(moves_with_time))
     else:
         features['avg_move_time'] = 0.0
         features['time_pressure_moves'] = 0.0
 
-    # Phase-specific (already capped)
-    opening_cp = [m.centipawn_loss for m in opening_moves]
-    middlegame_cp = [m.centipawn_loss for m in middlegame_moves]
-    endgame_cp = [m.centipawn_loss for m in endgame_moves]
+    # Phase-specific
+    opening_cp = [float(m.centipawn_loss) for m in opening_moves]
+    middlegame_cp = [float(m.centipawn_loss) for m in middlegame_moves]
+    endgame_cp = [float(m.centipawn_loss) for m in endgame_moves]
     
-    features['avg_cp_loss_opening'] = np.mean(opening_cp) if opening_cp else 0.0
-    features['avg_cp_loss_middlegame'] = np.mean(middlegame_cp) if middlegame_cp else 0.0
-    features['avg_cp_loss_endgame'] = np.mean(endgame_cp) if endgame_cp else 0.0
+    features['avg_cp_loss_opening'] = ultra_round(np.mean(opening_cp) if opening_cp else 0.0)
+    features['avg_cp_loss_middlegame'] = ultra_round(np.mean(middlegame_cp) if middlegame_cp else 0.0)
+    features['avg_cp_loss_endgame'] = ultra_round(np.mean(endgame_cp) if endgame_cp else 0.0)
 
-    features['blunder_rate_opening'] = sum(1 for m in opening_moves if m.is_blunder) / len(opening_moves) if opening_moves else 0.0
-    features['blunder_rate_middlegame'] = sum(1 for m in middlegame_moves if m.is_blunder) / len(middlegame_moves) if middlegame_moves else 0.0
-    features['blunder_rate_endgame'] = sum(1 for m in endgame_moves if m.is_blunder) / len(endgame_moves) if endgame_moves else 0.0
+    features['blunder_rate_opening'] = ultra_round(
+        sum(1 for m in opening_moves if m.is_blunder) / len(opening_moves) if opening_moves else 0.0
+    )
+    features['blunder_rate_middlegame'] = ultra_round(
+        sum(1 for m in middlegame_moves if m.is_blunder) / len(middlegame_moves) if middlegame_moves else 0.0
+    )
+    features['blunder_rate_endgame'] = ultra_round(
+        sum(1 for m in endgame_moves if m.is_blunder) / len(endgame_moves) if endgame_moves else 0.0
+    )
 
-    # Print summary unless silent
     if not silent:
         print(f"\n📊 FEATURE EXTRACTION SUMMARY:")
         print(f"   Total moves: {total_moves}")
-        print(f"   Avg CP loss: {features['avg_cp_loss']:.1f}")
-        print(f"   Blunder rate: {features['blunder_rate']:.2%}")
-        print(f"   Best move rate: {features['best_moves']:.2%}")
+        print(f"   Opening: {len(opening_moves)}, Middlegame: {len(middlegame_moves)}, Endgame: {len(endgame_moves)}")
+        print(f"   Avg CP loss: {features['avg_cp_loss']:.6f}")
+        print(f"   Blunder rate: {features['blunder_rate']:.6f}")
+        print(f"   Best move rate: {features['best_moves']:.6f}")
     
     return features
-
-
-# Standalone test
-if __name__ == "__main__":
-    example_pgn = """[Event "Rated Blitz game"]
-[White "Player1"]
-[Black "Player2"]
-[Result "1-0"]
-
-1. e4 { [%clk 0:04:58.23] } 1... e5 { [%clk 0:04:57.80] } 2. Nf3 { [%clk 0:04:55.10] } 2... Nc6 { [%clk 0:04:54.20] } 1-0
-"""
-    with ChessAnalyzer(silent=False) as analyzer:
-        analysis = analyzer.analyze_game(example_pgn, "Player1")
-        if analysis:
-            print(f"Analyzed {analysis.total_moves} moves")
-            features = extract_features([analysis])
-            print("\nExtracted features:")
-            for k, v in features.items():
-                print(f"  {k:30s} {v:.4f}")

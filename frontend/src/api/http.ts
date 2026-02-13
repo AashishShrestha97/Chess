@@ -8,11 +8,12 @@ const http = axios.create({
   timeout: 30000, // 30 second default timeout for most requests
 });
 
-// Create a separate axios instance for long-running operations like analysis
+// Create a separate axios instance for long-running operations like analysis.
+// Analysis = Stockfish evaluating 10 games × ~20 moves each → needs plenty of headroom.
 export const httpLongRunning = axios.create({
   baseURL,
   withCredentials: true,
-  timeout: 120000, // 2 minute timeout for analysis and heavy computations
+  timeout: 10 * 60 * 1000, // 10 minutes (was 2 minutes — caused ECONNABORTED on analysis)
 });
 
 // --- Auto refresh access token on 401 then retry once
@@ -42,16 +43,16 @@ const setupInterceptors = (instance: typeof http) => {
     async (error) => {
       const original = error.config;
       if (!original) return Promise.reject(error);
-      
+
       const url = original.url || "unknown";
       console.warn(`⚠️ HTTP ${error?.response?.status} ${url}:`, error?.response?.data?.message || error?.message);
-      
+
       // Only retry if not already retried and not calling auth endpoints
       const isAuthEndpoint = original.url?.includes("/api/auth/");
-      
+
       // Skip refresh for auth endpoints except refresh itself
       const isRefreshEndpoint = original.url?.includes("/api/auth/refresh");
-      
+
       if (error?.response?.status === 401 && !original._retry && !isAuthEndpoint && !isRefreshEndpoint) {
         original._retry = true;
 
@@ -60,7 +61,7 @@ const setupInterceptors = (instance: typeof http) => {
           try {
             console.log("🔄 Attempting token refresh...");
             // Use a separate instance to avoid circular refresh
-            await axios.post(baseURL + "/api/auth/refresh", {}, { 
+            await axios.post(baseURL + "/api/auth/refresh", {}, {
               withCredentials: true,
               timeout: 10000
             });

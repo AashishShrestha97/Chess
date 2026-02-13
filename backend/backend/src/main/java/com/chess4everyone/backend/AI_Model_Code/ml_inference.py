@@ -1,20 +1,14 @@
 """
-ML Inference Engine for Chess Analysis
-=========================================
-Loads trained XGBoost models (+ scalers + label encoders) and runs
-predictions on Stockfish-extracted chess game features.
+ML Inference Engine - ULTRA DETERMINISTIC VERSION
+==================================================
+Maximum determinism for tactical and positional predictions.
 
-Model files expected in ../AI_Models/:
-  opening_model.pkl          opening_scaler.pkl          opening_label_encoder.pkl
-  middlegame_model.pkl       middlegame_scaler.pkl       middlegame_label_encoder.pkl
-  endgame_model.pkl          endgame_scaler.pkl          endgame_label_encoder.pkl
-  tactical_model.pkl         tactical_scaler.pkl         tactical_label_encoder.pkl
-  positional_model.pkl       positional_scaler.pkl       positional_label_encoder.pkl
-  time_management_model.pkl  time_management_scaler.pkl  time_management_label_encoder.pkl
-
-Label classes (from training): 'average', 'excellent', 'weak'
-  → mapped to API output:      'average', 'excellent',  'weak'
-  → numeric_score ranges:       34-67,      68-100,      0-33
+Key fixes:
+1. Explicit random seed everywhere
+2. Sorted dictionary operations
+3. Decimal precision for XGBoost inputs
+4. Deterministic argmax with tie-breaking
+5. Feature vector type enforcement
 """
 
 import os
@@ -24,6 +18,7 @@ import logging
 import numpy as np
 from pathlib import Path
 from typing import List, Dict, Optional
+from decimal import Decimal, ROUND_HALF_UP
 
 try:
     from joblib import load as joblib_load
@@ -37,11 +32,13 @@ from chess_analyzer import ChessAnalyzer, extract_features
 
 logger = logging.getLogger(__name__)
 
+# Set seeds globally
+RANDOM_SEED = 42
+np.random.seed(RANDOM_SEED)
+import random
+random.seed(RANDOM_SEED)
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Feature sets per model – MUST match the columns used during training
-# (see final_training.py FEATURE_SETS dict, Cell 2)
-# ─────────────────────────────────────────────────────────────────────────────
+
 FEATURE_MAPPINGS: Dict[str, List[str]] = {
     "opening": [
         "avg_cp_loss_opening",
@@ -53,13 +50,14 @@ FEATURE_MAPPINGS: Dict[str, List[str]] = {
         "mistake_rate",
         "best_moves",
         "good_moves",
-        "brilliant_moves",
-        "inaccuracy_rate",
     ],
     "endgame": [
         "avg_cp_loss_endgame",
         "blunder_rate_endgame",
         "best_moves",
+        "good_moves",
+        "brilliant_moves",
+        "avg_cp_loss",
     ],
     "tactical": [
         "blunder_rate",
@@ -85,7 +83,6 @@ FEATURE_MAPPINGS: Dict[str, List[str]] = {
     ],
 }
 
-# Save-name used when persisting model artefacts (matches training script)
 _SAVE_NAME: Dict[str, str] = {
     "opening":         "opening",
     "middlegame":      "middlegame",
@@ -95,7 +92,6 @@ _SAVE_NAME: Dict[str, str] = {
     "time_management": "time_management",
 }
 
-# Human-readable display names for strengths / weaknesses lists
 _DISPLAY_NAMES: Dict[str, str] = {
     "opening":         "Opening",
     "middlegame":      "Middlegame",
@@ -106,9 +102,6 @@ _DISPLAY_NAMES: Dict[str, str] = {
 }
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Helper: load a single .pkl file (joblib preferred, pickle fallback)
-# ─────────────────────────────────────────────────────────────────────────────
 def _load_pkl(path: str):
     if JOBLIB_AVAILABLE:
         try:
@@ -119,20 +112,28 @@ def _load_pkl(path: str):
         return pickle.load(f)
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Main inference engine
-# ─────────────────────────────────────────────────────────────────────────────
-class MLInferenceEngine:
-    """Load trained XGBoost models and produce per-category predictions."""
+def ultra_round(value: float, decimals: int = 8) -> float:
+    """Ultra-precise rounding using Decimal"""
+    d = Decimal(str(value))
+    return float(d.quantize(Decimal(10) ** -decimals, rounding=ROUND_HALF_UP))
 
+
+class MLInferenceEngine:
+    """ULTRA DETERMINISTIC ML inference engine"""
+    
+    RANDOM_SEED = 42
+    
     def __init__(self, stockfish_path: Optional[str] = None):
+        # Reset all random seeds
+        np.random.seed(self.RANDOM_SEED)
+        random.seed(self.RANDOM_SEED)
+        
         self.stockfish_path = stockfish_path or self._find_stockfish()
         self.models: Dict[str, object] = {}
         self.scalers: Dict[str, object] = {}
         self.label_encoders: Dict[str, object] = {}
         self._load_all_artefacts()
 
-    # ── Stockfish path detection ──────────────────────────────────────────
     def _find_stockfish(self) -> str:
         candidates = {
             "Windows": [
@@ -152,25 +153,51 @@ class MLInferenceEngine:
             return found
         return "stockfish.exe" if system == "Windows" else "/usr/games/stockfish"
 
-    # ── Load all artefacts ────────────────────────────────────────────────
     def _load_all_artefacts(self):
-        logger.info("🔄 Loading ML model artefacts …")
+        logger.info("🔄 Loading ML model artefacts (ULTRA DETERMINISTIC MODE) …")
         logger.info("   Stockfish: %s", self.stockfish_path)
+        logger.info("   Random Seed: %d", self.RANDOM_SEED)
 
         script_dir = os.path.dirname(os.path.abspath(__file__))
         models_dir = os.path.join(script_dir, "..", "AI_Models")
 
-        for key in FEATURE_MAPPINGS:
+        # Load in sorted order for consistency
+        for key in sorted(FEATURE_MAPPINGS.keys()):
             save_name = _SAVE_NAME[key]
             model_path   = os.path.join(models_dir, f"{save_name}_model.pkl")
             scaler_path  = os.path.join(models_dir, f"{save_name}_scaler.pkl")
             encoder_path = os.path.join(models_dir, f"{save_name}_label_encoder.pkl")
 
             try:
-                self.models[key]         = _load_pkl(model_path)
-                self.scalers[key]        = _load_pkl(scaler_path)
+                model = _load_pkl(model_path)
+                
+                # Force deterministic settings on XGBoost model
+                if hasattr(model, 'random_state'):
+                    model.random_state = self.RANDOM_SEED
+                if hasattr(model, 'n_jobs'):
+                    model.n_jobs = 1  # Single thread
+                if hasattr(model, 'set_params'):
+                    try:
+                        model.set_params(random_state=self.RANDOM_SEED, n_jobs=1)
+                    except:
+                        pass
+                
+                self.models[key] = model
+                self.scalers[key] = _load_pkl(scaler_path)
                 self.label_encoders[key] = _load_pkl(encoder_path)
-                logger.info("   ✅ %s", key)
+                
+                scaler = self.scalers[key]
+                if hasattr(scaler, 'n_features_in_'):
+                    expected_features = scaler.n_features_in_
+                    provided_features = len(FEATURE_MAPPINGS[key])
+                    logger.info(f"   ✅ {key}: expects {expected_features} features, mapping provides {provided_features}")
+                    
+                    if expected_features != provided_features:
+                        logger.error(f"   ❌ MISMATCH for {key}!")
+                        raise ValueError(f"Feature count mismatch for {key}")
+                else:
+                    logger.info("   ✅ %s", key)
+                    
             except FileNotFoundError as exc:
                 logger.error("   ❌ Missing artefact for '%s': %s", key, exc)
                 raise
@@ -178,24 +205,27 @@ class MLInferenceEngine:
                 logger.error("   ❌ Failed to load '%s': %s", key, exc)
                 raise
 
-        logger.info("✅ All %d models loaded.", len(self.models))
+        logger.info("✅ All %d models loaded in ULTRA DETERMINISTIC mode.", len(self.models))
 
-    # ── Public API ────────────────────────────────────────────────────────
     def analyze_games(self, pgn_games: List[str], player_name: str) -> Dict:
         """
-        Run Stockfish on every PGN, extract features, predict per-category
-        skill level, and return the full response dict consumed by main.py.
+        ULTRA DETERMINISTIC analysis
         """
-        logger.info("🔍 Analyzing %d game(s) for '%s'", len(pgn_games), player_name)
+        logger.info("🔍 Analyzing %d game(s) for '%s' (DETERMINISTIC)", len(pgn_games), player_name)
 
         with ChessAnalyzer(self.stockfish_path, silent=True) as analyzer:
             analyses = analyzer.analyze_multiple_games(pgn_games, player_name)
 
         if not analyses:
-            raise RuntimeError("No games could be analysed (Stockfish returned nothing).")
+            raise RuntimeError("No games could be analysed.")
 
         features = extract_features(analyses, silent=True)
         logger.info("✅ Features extracted from %d game(s)", len(analyses))
+        
+        # Log features in sorted order
+        logger.info("📊 Extracted features (sorted):")
+        for feat_key in sorted(features.keys()):
+            logger.info(f"   - {feat_key}: {features[feat_key]:.8f}")
 
         predictions   = self._predict_all(features)
         strengths     = self._strengths(predictions)
@@ -209,104 +239,145 @@ class MLInferenceEngine:
             "predictions":   predictions,
             "strengths":     strengths,
             "weaknesses":    weaknesses,
-            "features":      {k: float(v) for k, v in features.items()},
+            "features":      {k: ultra_round(v) for k, v in features.items()},
             "recommendation": recommendation,
         }
 
-    # ── Per-category prediction ───────────────────────────────────────────
     def _predict_all(self, features: Dict[str, float]) -> Dict[str, Dict]:
-        return {cat: self._predict_one(cat, features) for cat in FEATURE_MAPPINGS}
+        """Predict in SORTED order"""
+        return {cat: self._predict_one(cat, features) 
+                for cat in sorted(FEATURE_MAPPINGS.keys())}
 
     def _predict_one(self, category: str, features: Dict[str, float]) -> Dict:
         """
-        1. Build the feature vector for this category.
-        2. Scale it with the saved StandardScaler.
-        3. Predict with the XGBoost model.
-        4. Decode the label via the saved LabelEncoder.
-        5. Return {classification, confidence, numeric_score}.
+        ULTRA DETERMINISTIC prediction
         """
         try:
             feat_names = FEATURE_MAPPINGS[category]
-            X_raw = np.array([[features.get(f, 0.0) for f in feat_names]])
+            
+            # Build feature vector with ultra-precise rounding
+            feature_values = []
+            for f in feat_names:
+                if f not in features:
+                    logger.warning(f"⚠️  Feature '{f}' missing for {category}, using 0.0")
+                    feature_values.append(0.0)
+                else:
+                    # Ultra-precise rounding
+                    feature_values.append(ultra_round(features[f]))
+            
+            # Check for insufficient phase data
+            if category in ['opening', 'middlegame', 'endgame']:
+                phase_prefix = category
+                phase_features = [f for f in feat_names if phase_prefix in f]
+                if phase_features:
+                    phase_values = [features.get(f, 0.0) for f in phase_features]
+                    if all(v == 0.0 for v in phase_values):
+                        logger.warning(f"⚠️  No {category} data, returning neutral")
+                        return {
+                            "classification": "average",
+                            "confidence": 0.5,
+                            "numeric_score": 50,
+                        }
+            
+            # Strict dtype enforcement
+            X_raw = np.array([feature_values], dtype=np.float64)
+            
+            logger.debug(f"   {category}: {feat_names}")
+            logger.debug(f"   {category}: {feature_values}")
 
             scaler  = self.scalers.get(category)
             model   = self.models.get(category)
             le      = self.label_encoders.get(category)
 
             if model is None or scaler is None or le is None:
-                logger.warning("⚠️  Missing artefact for '%s', returning default.", category)
+                logger.warning("⚠️  Missing artefact for '%s'", category)
                 return self._default()
 
+            # Scale with strict precision
             X_scaled = scaler.transform(X_raw)
+            X_scaled = X_scaled.astype(np.float64)
 
             if hasattr(model, "predict_proba"):
+                # Get probabilities
                 proba = model.predict_proba(X_scaled)[0]
-                class_idx   = int(np.argmax(proba))
-                confidence  = float(np.max(proba))
+                
+                # DETERMINISTIC argmax with tie-breaking
+                max_prob = np.max(proba)
+                max_indices = np.where(proba == max_prob)[0]
+                
+                # If tie, use first index (deterministic)
+                class_idx = int(max_indices[0])
+                confidence = float(max_prob)
+                
+                # Ultra-precise rounding
+                confidence = ultra_round(confidence, decimals=6)
             else:
-                # Regression fallback (shouldn't happen with XGBoost classifier)
+                # Regression fallback
                 raw = float(model.predict(X_scaled)[0])
                 confidence = max(0.0, min(1.0, raw))
+                confidence = ultra_round(confidence, decimals=6)
                 class_idx  = int(round(confidence * (len(le.classes_) - 1)))
 
-            # Decode label  (le.classes_ is sorted alpha: ['average','excellent','weak'])
+            # Decode label
             label_str = str(le.inverse_transform([class_idx])[0])
-
-            # Map training label → classification + numeric_score
-            # Training labels: 'weak' / 'average' / 'excellent'
             classification, numeric_score = self._label_to_output(label_str, confidence)
 
-            return {
+            result = {
                 "classification": classification,
-                "confidence":     round(confidence, 3),
+                "confidence":     confidence,
                 "numeric_score":  numeric_score,
             }
+            
+            logger.info(f"   ✅ {category}: {classification} (conf={confidence:.6f}, score={numeric_score})")
+            return result
 
         except Exception as exc:
             logger.error("❌ Prediction failed for '%s': %s", category, exc, exc_info=True)
             return self._default()
-
-    # ── Label → output mapping ────────────────────────────────────────────
+    
     @staticmethod
     def _label_to_output(label: str, confidence: float):
-        """
-        Convert the training label to the classification string and a
-        0-100 numeric_score that the Java backend / frontend can display.
-
-        Score bands:
-          weak      →  0 – 33   (centre ~17, scaled by confidence)
-          average   → 34 – 67   (centre ~50, scaled by confidence)
-          excellent → 68 – 100  (centre ~84, scaled by confidence)
-        """
+        """Deterministic label to output conversion"""
         label = label.strip().lower()
+        
+        # Use Decimal for exact calculation
+        conf_decimal = Decimal(str(confidence))
+        
         if label == "excellent":
             classification = "excellent"
-            numeric_score  = 68 + int(confidence * 32)   # 68 – 100
+            score_calc = 68 + int((conf_decimal * 32).to_integral_value(rounding=ROUND_HALF_UP))
+            numeric_score = score_calc
         elif label == "weak":
             classification = "weak"
-            numeric_score  = int(confidence * 33)          # 0 – 33
+            score_calc = int((conf_decimal * 33).to_integral_value(rounding=ROUND_HALF_UP))
+            numeric_score = score_calc
         else:  # "average"
             classification = "average"
-            numeric_score  = 34 + int(confidence * 33)    # 34 – 67
+            score_calc = 34 + int((conf_decimal * 33).to_integral_value(rounding=ROUND_HALF_UP))
+            numeric_score = score_calc
 
         return classification, max(0, min(100, numeric_score))
 
-    # ── Strengths / weaknesses / recommendation ───────────────────────────
     def _strengths(self, predictions: Dict[str, Dict]) -> List[str]:
+        """Extract strengths in sorted order"""
         result = []
-        for cat, pred in predictions.items():
+        for cat in sorted(predictions.keys()):
+            pred = predictions[cat]
             if pred["classification"] == "excellent":
                 result.append(f"{_DISPLAY_NAMES[cat]} - Excellent")
         return result or ["Balanced performance overall"]
 
     def _weaknesses(self, predictions: Dict[str, Dict]) -> List[str]:
+        """Extract weaknesses in sorted order"""
         result = []
-        for cat, pred in predictions.items():
+        for cat in sorted(predictions.keys()):
+            pred = predictions[cat]
             if pred["classification"] == "weak":
                 result.append(_DISPLAY_NAMES[cat])
         return result or ["No significant weaknesses — well-rounded player!"]
 
     def _recommendation(self, predictions: Dict[str, Dict]) -> str:
+        """Deterministic recommendation"""
         recs = {
             "opening":         "Study opening theory and common opening lines.",
             "middlegame":      "Focus on middlegame planning and piece coordination.",
@@ -315,17 +386,20 @@ class MLInferenceEngine:
             "positional":      "Work on positional understanding and pawn structures.",
             "time_management": "Manage time better — avoid rushing in critical positions.",
         }
-        # Weakest category by confidence
-        weakest = min(
-            ((cat, p) for cat, p in predictions.items() if p["classification"] != "excellent"),
-            key=lambda x: x[1]["numeric_score"],
-            default=None,
-        )
-        if weakest is None:
+        
+        # Get non-excellent categories
+        weak_cats = [(cat, p) for cat, p in predictions.items() 
+                     if p["classification"] != "excellent"]
+        
+        if not weak_cats:
             return "Excellent all round — keep challenging stronger opponents!"
-        return recs.get(weakest[0], "Keep analysing your games to improve.")
+        
+        # Sort by numeric_score (ascending), then by category name
+        weak_cats.sort(key=lambda x: (x[1]["numeric_score"], x[0]))
+        weakest_cat = weak_cats[0][0]
+        
+        return recs.get(weakest_cat, "Keep analysing your games to improve.")
 
-    # ── Default (error fallback) ──────────────────────────────────────────
     @staticmethod
     def _default() -> Dict:
         return {"classification": "average", "confidence": 0.5, "numeric_score": 50}
