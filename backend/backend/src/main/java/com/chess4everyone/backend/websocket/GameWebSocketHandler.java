@@ -34,13 +34,14 @@ import lombok.extern.slf4j.Slf4j;
  *   ACCEPT_DRAW {}
  *   DECLINE_DRAW {}
  *   RESIGN      {}
- *   FLAG        { player }   (clock ran out)
+ *   FLAG        { player }
  *   TIME_UPDATE { whiteTime, blackTime }
+ *   GAME_OVER   { winner, reason }
  *
  * Broadcast message types (server → clients):
  *   GAME_START      { whitePlayer, blackPlayer, timeControl, ... }
  *   WAITING_FOR_OPPONENT {}
- *   MOVE            (echoed to both with player field)
+ *   MOVE            (echoed to opponent only, with player field)
  *   DRAW_OFFER      {}
  *   DRAW_DECLINED   {}
  *   GAME_OVER       { winner, reason }
@@ -133,7 +134,10 @@ public class GameWebSocketHandler extends AbstractWebSocketHandler {
 
         if (players.size() == 1) {
             // First player — wait for opponent
-            send(session, Map.of("type", "WAITING_FOR_OPPONENT", "message", "Waiting for opponent to connect..."));
+            send(session, Map.of(
+                "type", "WAITING_FOR_OPPONENT",
+                "message", "Waiting for opponent to connect..."
+            ));
         } else if (players.size() >= 2) {
             // Both players connected — start the game
             broadcastToGame(gameId, Map.of(
@@ -143,9 +147,14 @@ public class GameWebSocketHandler extends AbstractWebSocketHandler {
                 "blackPlayer", game.getBlackPlayer().getName(),
                 "whitePlayerId", game.getWhitePlayer().getId(),
                 "blackPlayerId", game.getBlackPlayer().getId(),
-                "timeControl", game.getTimeControl(),
+                "timeControl", game.getTimeControl() != null ? game.getTimeControl() : "10+0",
                 "status", "ACTIVE"
             ));
+
+            // Mark game as active
+            game.setStatus("ACTIVE");
+            game.setStartedAt(Instant.now());
+            multiplayerGameRepository.save(game);
         }
     }
 
@@ -176,9 +185,10 @@ public class GameWebSocketHandler extends AbstractWebSocketHandler {
 
         switch (type) {
             case "MOVE" -> {
-                // Broadcast move to both players (including sender — frontend filters echo)
+                // Add the player's color to the message
                 data.put("player", color);
-                broadcastToGame(gameId, data);
+                // Send move only to the OPPONENT, not back to the sender
+                sendToOpponent(gameId, sessionId, data);
             }
 
             case "OFFER_DRAW" -> broadcastToGame(gameId, Map.of(
@@ -226,7 +236,8 @@ public class GameWebSocketHandler extends AbstractWebSocketHandler {
                 // Sent by a player reporting checkmate/stalemate
                 String winner = (String) data.getOrDefault("winner", "draw");
                 String reason = (String) data.getOrDefault("reason", "Checkmate");
-                endGame(gameId, winner.equals("draw") ? null : winner, reason.toUpperCase().replace(" ", "_"));
+                endGame(gameId, winner.equals("draw") ? null : winner,
+                    reason.toUpperCase().replace(" ", "_"));
                 broadcastToGame(gameId, Map.of(
                     "type", "GAME_OVER",
                     "winner", winner,
@@ -235,8 +246,8 @@ public class GameWebSocketHandler extends AbstractWebSocketHandler {
             }
 
             case "TIME_UPDATE" -> {
-                // Just forward to opponent for clock sync — don't persist
-                broadcastToGame(gameId, data);
+                // Forward to opponent only for clock sync
+                sendToOpponent(gameId, sessionId, data);
             }
 
             default -> log.warn("⚠️ Unknown message type: {}", type);
@@ -284,12 +295,30 @@ public class GameWebSocketHandler extends AbstractWebSocketHandler {
 
     // ── Helpers ──────────────────────────────────────────────────────────────
 
+    /**
+     * Broadcast to ALL players in a game (including sender)
+     */
     private void broadcastToGame(Long gameId, Map<String, Object> data) {
         Set<WebSocketSession> players = gameSessions.get(gameId);
         if (players == null) return;
 
         for (WebSocketSession s : players) {
             send(s, data);
+        }
+    }
+
+    /**
+     * Send to the OPPONENT only (not the sender).
+     * Used for MOVE and TIME_UPDATE so the sender doesn't get an echo.
+     */
+    private void sendToOpponent(Long gameId, String senderSessionId, Map<String, Object> data) {
+        Set<WebSocketSession> players = gameSessions.get(gameId);
+        if (players == null) return;
+
+        for (WebSocketSession s : players) {
+            if (!s.getId().equals(senderSessionId)) {
+                send(s, data);
+            }
         }
     }
 
@@ -308,9 +337,16 @@ public class GameWebSocketHandler extends AbstractWebSocketHandler {
             MultiplayerGame game = multiplayerGameRepository.findById(gameId).orElse(null);
             if (game == null) return;
             game.setStatus("FINISHED");
-            game.setWinnerColor(winnerColor != null ? winnerColor : "draw");
+            if (winnerColor != null) {
+                game.setWinnerColor(winnerColor);
+                game.setResult(winnerColor.equals("white") ? "WHITE_WIN" : "BLACK_WIN");
+            } else {
+                game.setWinnerColor("draw");
+                game.setResult("DRAW");
+            }
             game.setTerminationReason(reason);
             game.setEndedAt(Instant.now());
+            game.setCompletedAt(Instant.now());
             multiplayerGameRepository.save(game);
             log.info("✅ Game {} finished — winner: {}, reason: {}", gameId, winnerColor, reason);
         } catch (Exception e) {

@@ -90,6 +90,7 @@ const StandardChessPage: React.FC<StandardChessPageProps> = ({
   >("connecting");
 
   // Game state refs
+  const [clockStarted, setClockStarted] = useState(false);
   const clockStartedRef = useRef(false);
   const gameOverRef = useRef(false);
   const isSoundOnRef = useRef(true);
@@ -177,6 +178,7 @@ const StandardChessPage: React.FC<StandardChessPageProps> = ({
     setIncrement(inc);
     incrementRef.current = inc;
     clockStartedRef.current = false;
+    setClockStarted(false);
     whiteTimeWarned30.current = false;
     whiteTimeWarned10.current = false;
     blackTimeWarned30.current = false;
@@ -262,7 +264,14 @@ const StandardChessPage: React.FC<StandardChessPageProps> = ({
         case "GAME_START": {
           gameRef.current = new Chess();
           setFen(gameRef.current.fen());
+          // Reset clock from server-confirmed timeControl so both clients are in sync
+          const tc = (data.timeControl as string) || "10+0";
+          const mins = Number(tc.split("+")[0]) || 0;
+          const totalSecs = mins * 60;
+          setWhiteTime(totalSecs);
+          setBlackTime(totalSecs);
           clockStartedRef.current = true;
+          setClockStarted(true); // state change triggers clock effect even if currentTurn stays "w"
           setCurrentTurn("w");
           currentTurnRef.current = "w";
           setMpConnectionStatus("playing");
@@ -437,7 +446,7 @@ const StandardChessPage: React.FC<StandardChessPageProps> = ({
     setWinner(winColor);
     setStatusMessage(`Time's up! ${winColor} wins on time!`);
     playSound("gameEnd");
-    if (isMultiplayer) sendMessage({ type: "FLAG" });
+    if (isMultiplayer) sendMessage({ type: "FLAG", player: flagged });
   }
 
   const formatTime = (seconds: number): string => {
@@ -495,7 +504,7 @@ const StandardChessPage: React.FC<StandardChessPageProps> = ({
       else gameRecorderRef.current.updateTime("white", whiteTime);
     }
 
-    if (!clockStartedRef.current) clockStartedRef.current = true;
+    if (!clockStartedRef.current) { clockStartedRef.current = true; setClockStarted(true); }
 
     const sideToMove = game.turn();
 
@@ -646,6 +655,7 @@ const StandardChessPage: React.FC<StandardChessPageProps> = ({
     setWinner(null);
     gameOverRef.current = false;
     clockStartedRef.current = false;
+    setClockStarted(false);
     setLastMove(null);
     setCapturedPieces({ white: [], black: [] });
     const [mainPart, incStr] = effectiveTimeControl.split("+");
@@ -749,7 +759,7 @@ const StandardChessPage: React.FC<StandardChessPageProps> = ({
 
   // Clock ticker
   useEffect(() => {
-    if (gameOver || isPaused || !clockStartedRef.current) return;
+    if (gameOver || isPaused || !clockStarted) return;
     let timerId: number;
     if (currentTurn === "w") {
       timerId = window.setInterval(() => {
@@ -771,7 +781,7 @@ const StandardChessPage: React.FC<StandardChessPageProps> = ({
       }, 1000);
     }
     return () => window.clearInterval(timerId);
-  }, [currentTurn, gameOver, isPaused]);
+  }, [currentTurn, gameOver, isPaused, clockStarted]);
 
   // Multiplayer: send periodic time updates
   useEffect(() => {

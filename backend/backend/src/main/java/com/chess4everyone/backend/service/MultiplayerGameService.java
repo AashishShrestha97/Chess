@@ -27,7 +27,7 @@ public class MultiplayerGameService {
         game.setWhitePlayer(whitePlayer);
         game.setBlackPlayer(blackPlayer);
         game.setTimeControl(timeControl);
-        game.setGameType(gameType);
+        game.setGameType(gameType != null ? gameType : "STANDARD");
         game.setStatus("WAITING");
         game.setCurrentFen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1");
 
@@ -75,12 +75,17 @@ public class MultiplayerGameService {
             game.setResult(result);
             game.setTerminationReason(reason);
             game.setCompletedAt(Instant.now());
+            game.setEndedAt(Instant.now());
             multiplayerGameRepository.save(game);
         });
     }
 
     public Optional<MultiplayerGame> getGameByUuid(String gameUuid) {
         return multiplayerGameRepository.findByGameUuid(gameUuid);
+    }
+
+    public Optional<MultiplayerGame> getGameById(Long gameId) {
+        return multiplayerGameRepository.findById(gameId);
     }
 
     private long parseTimeControlToMs(String timeControl) {

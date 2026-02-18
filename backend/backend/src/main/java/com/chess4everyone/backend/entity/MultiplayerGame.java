@@ -46,10 +46,13 @@ public class MultiplayerGame {
     private String gameType; // "STANDARD" or "VOICE"
 
     @Column(name = "status", nullable = false)
-    private String status; // "WAITING", "ACTIVE", "COMPLETED", "ABANDONED"
+    private String status; // "WAITING", "ACTIVE", "COMPLETED", "ABANDONED", "FINISHED"
 
     @Column(name = "result")
     private String result; // "WHITE_WIN", "BLACK_WIN", "DRAW", null if ongoing
+
+    @Column(name = "winner_color")
+    private String winnerColor; // "white", "black", "draw"
 
     @Column(name = "termination_reason")
     private String terminationReason;
@@ -83,4 +86,7 @@ public class MultiplayerGame {
 
     @Column(name = "completed_at")
     private Instant completedAt;
+
+    @Column(name = "ended_at")
+    private Instant endedAt;
 }

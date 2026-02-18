@@ -108,6 +108,7 @@ const VoiceGamePage: React.FC<VoiceGamePageProps> = ({
   const blackTimeWarned30 = useRef(false);
   const blackTimeWarned10 = useRef(false);
 
+  const [clockStarted, setClockStarted] = useState(false);
   const clockStartedRef = useRef(false);
   const gameOverRef = useRef(false);
   const isSoundOnRef = useRef(true);
@@ -171,6 +172,7 @@ const VoiceGamePage: React.FC<VoiceGamePageProps> = ({
     setIncrement(inc);
     incrementRef.current = inc;
     clockStartedRef.current = false;
+    setClockStarted(false);
     whiteTimeWarned30.current = false;
     whiteTimeWarned10.current = false;
     blackTimeWarned30.current = false;
@@ -254,7 +256,14 @@ const VoiceGamePage: React.FC<VoiceGamePageProps> = ({
       case "GAME_START": {
         gameRef.current = new Chess();
         setFen(gameRef.current.fen());
+        // Reset clock from server-confirmed timeControl so both clients are in sync
+        const tc = (data.timeControl as string) || "3+0";
+        const mins = Number(tc.split("+")[0]) || 0;
+        const totalSecs = mins * 60;
+        setWhiteTime(totalSecs);
+        setBlackTime(totalSecs);
         clockStartedRef.current = true;
+        setClockStarted(true); // state change triggers clock effect even if currentTurn stays "w"
         setCurrentTurn("w");
         currentTurnRef.current = "w";
         setMpConnectionStatus("playing");
@@ -454,7 +463,7 @@ const VoiceGamePage: React.FC<VoiceGamePageProps> = ({
     setWinner(winColor);
     setStatusMessage(message);
     speak(message);
-    if (isMultiplayer) sendMessage({ type: "FLAG" });
+    if (isMultiplayer) sendMessage({ type: "FLAG", player: flagged });
   }
 
   const formatTime = (seconds: number): string => {
@@ -501,7 +510,7 @@ const VoiceGamePage: React.FC<VoiceGamePageProps> = ({
       else gameRecorderRef.current.updateTime("white", whiteTime);
     }
 
-    if (!clockStartedRef.current) clockStartedRef.current = true;
+    if (!clockStartedRef.current) { clockStartedRef.current = true; setClockStarted(true); }
 
     const sideToMove = game.turn();
 
@@ -848,7 +857,7 @@ const VoiceGamePage: React.FC<VoiceGamePageProps> = ({
 
   // Clock ticker
   useEffect(() => {
-    if (gameOver || isPaused || !clockStartedRef.current) return;
+    if (gameOver || isPaused || !clockStarted) return;
     let timerId: number;
     if (currentTurn === "w") {
       timerId = window.setInterval(() => {
@@ -875,7 +884,7 @@ const VoiceGamePage: React.FC<VoiceGamePageProps> = ({
       }, 1000);
     }
     return () => window.clearInterval(timerId);
-  }, [currentTurn, gameOver, isPaused]);
+  }, [currentTurn, gameOver, isPaused, clockStarted]);
 
   // Multiplayer: periodic time updates
   useEffect(() => {

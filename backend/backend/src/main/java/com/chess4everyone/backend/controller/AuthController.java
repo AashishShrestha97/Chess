@@ -82,53 +82,55 @@ public class AuthController {
     }
 
     @GetMapping("/token")
-public ResponseEntity<?> getToken(HttpServletRequest req) {
-    String token = null;
-    if (req.getCookies() != null) {
-        for (Cookie c : req.getCookies()) {
-            if ("ch4e_access".equals(c.getName())) {
-                token = c.getValue();
-                break;
-            }
-        }
-    }
-    if (token == null) return ResponseEntity.status(401).body("No token");
-    return ResponseEntity.ok(Map.of("token", token));
-}
-
-@GetMapping("/ws-token")
-    public ResponseEntity<?> wsToken(HttpServletRequest req) {
-        try {
-            String subject = null;
-            if (req.getCookies() != null) {
-                for (Cookie c : req.getCookies()) {
-                    if ("ch4e_access".equals(c.getName())) {
-                        try {
-                            subject = jwtService.parseToken(c.getValue()).getBody().getSubject();
-                        } catch (Exception ignored) {}
-                    }
+    public ResponseEntity<?> getToken(HttpServletRequest req) {
+        String token = null;
+        if (req.getCookies() != null) {
+            for (Cookie c : req.getCookies()) {
+                if ("ch4e_access".equals(c.getName())) {
+                    token = c.getValue();
+                    break;
                 }
             }
-
-            if (subject == null) {
-                return ResponseEntity.status(401).body(Map.of("error", "Not authenticated"));
-            }
-
-            User u = userRepo.findById(Long.valueOf(subject))
-                    .orElseThrow(() -> new RuntimeException("User not found"));
-
-            // Issue a 5-minute access token (same format, shorter lived)
-            String wsToken = jwtService.generateAccessToken(
-                u.getId().toString(),
-                Map.of("email", u.getEmail(), "name", u.getName())
-            );
-
-            return ResponseEntity.ok(Map.of("token", wsToken));
-
-        } catch (Exception e) {
-            System.out.println("❌ ws-token error: " + e.getMessage());
-            return ResponseEntity.status(500).body(Map.of("error", "Internal error"));
         }
+        if (token == null) return ResponseEntity.status(401).body("No token");
+        return ResponseEntity.ok(Map.of("token", token));
+    }
+
+    /**
+     * Returns the current access token for use in WebSocket URLs.
+     * WebSocket handshakes don't support Authorization headers, so the token
+     * is passed as a query param: ws://...?token=JWT
+     *
+     * Fix: simply validate and return the existing cookie token —
+     * no need to generate a new one (that was causing the 500).
+     */
+    @GetMapping("/ws-token")
+    public ResponseEntity<?> wsToken(HttpServletRequest req) {
+        String token = null;
+
+        if (req.getCookies() != null) {
+            for (Cookie c : req.getCookies()) {
+                if ("ch4e_access".equals(c.getName())) {
+                    token = c.getValue();
+                    break;
+                }
+            }
+        }
+
+        if (token == null || token.isBlank()) {
+            System.out.println("❌ ws-token: no ch4e_access cookie");
+            return ResponseEntity.status(401).body(Map.of("error", "Not authenticated"));
+        }
+
+        // Validate the token is still good before handing it to WebSocket
+        try {
+            jwtService.parseToken(token).getBody().getSubject();
+        } catch (Exception e) {
+            System.out.println("❌ ws-token: invalid/expired token: " + e.getMessage());
+            return ResponseEntity.status(401).body(Map.of("error", "Token expired, please log in again"));
+        }
+
+        return ResponseEntity.ok(Map.of("token", token));
     }
 
     @PostMapping("/login")
@@ -136,7 +138,6 @@ public ResponseEntity<?> getToken(HttpServletRequest req) {
         try {
             System.out.println("🔐 Login attempt for email: " + req.email());
             
-            // Find user by email
             User u = userRepo.findByEmail(req.email())
                 .orElseThrow(() -> {
                     System.out.println("❌ User not found: " + req.email());
@@ -145,7 +146,6 @@ public ResponseEntity<?> getToken(HttpServletRequest req) {
             
             System.out.println("👤 User found: " + u.getEmail() + ", Provider: " + u.getProvider());
             
-            // ✅ CHECK IF THIS IS AN OAUTH2 ACCOUNT
             if (!"LOCAL".equals(u.getProvider())) {
                 System.out.println("❌ User registered with " + u.getProvider() + ", cannot use password login");
                 return ResponseEntity.status(403).body(Map.of(
@@ -154,7 +154,6 @@ public ResponseEntity<?> getToken(HttpServletRequest req) {
                 ));
             }
             
-            // Check if user is enabled
             if (!u.isEnabled()) {
                 System.out.println("❌ User not enabled: " + req.email());
                 return ResponseEntity.status(403).body(Map.of(
@@ -163,7 +162,6 @@ public ResponseEntity<?> getToken(HttpServletRequest req) {
                 ));
             }
             
-            // Verify password
             if (!encoder.matches(req.password(), u.getPassword())) {
                 System.out.println("❌ Invalid password for: " + req.email());
                 throw new RuntimeException("Invalid email or password");
@@ -171,7 +169,6 @@ public ResponseEntity<?> getToken(HttpServletRequest req) {
             
             System.out.println("✅ Password verified for: " + req.email());
 
-            // Generate tokens
             String access = jwtService.generateAccessToken(
                 u.getId().toString(), 
                 Map.of("email", u.getEmail(), "name", u.getName())
@@ -180,14 +177,12 @@ public ResponseEntity<?> getToken(HttpServletRequest req) {
 
             System.out.println("🎫 Tokens generated for: " + req.email());
 
-            // Persist refresh token
             refreshService.save(
                 refresh, 
                 u, 
                 Instant.now().plusSeconds(props.getRefreshTokenDays() * 24L * 60 * 60)
             );
 
-            // Set cookies
             cookieUtils.addHttpOnlyCookie(
                 res, 
                 "ch4e_access", 
@@ -337,7 +332,6 @@ public ResponseEntity<?> getToken(HttpServletRequest req) {
             
             System.out.println("✅ Logout successful");
             
-            // ✅ Return provider info if it's a Google user
             String provider = "LOCAL";
             if (userId != null) {
                 var user = userRepo.findById(userId);
