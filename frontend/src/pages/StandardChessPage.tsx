@@ -15,7 +15,8 @@ interface StandardChessPageProps {
 }
 
 interface MultiplayerState {
-  gameId: string;
+  gameId: number;
+  gameUuid: string;
   color: "white" | "black";
   timeControl: string;
   opponentName: string;
@@ -24,8 +25,6 @@ interface MultiplayerState {
   whitePlayerId: number;
   blackPlayerId: number;
 }
-
-type MoveStatus = "success" | "error" | "invalid";
 
 interface GameHistoryItem {
   id: number;
@@ -48,28 +47,30 @@ const StandardChessPage: React.FC<StandardChessPageProps> = ({
   const isMultiplayer = !!(routeState as MultiplayerState)?.gameId;
   const mpState = isMultiplayer ? (routeState as MultiplayerState) : null;
   const wsRef = useRef<WebSocket | null>(null);
-  const myColor = mpState?.color ?? "white"; // in solo always white
+
+  // FIX: Use a ref for myColor so it's always fresh inside callbacks
+  const myColorRef = useRef<"white" | "black">(mpState?.color ?? "white");
+  const myColor = myColorRef.current;
 
   const [effectiveTimeControl, setEffectiveTimeControl] =
     useState<string>(timeControl);
 
   const gameRef = useRef(new Chess());
   const [fen, setFen] = useState(gameRef.current.fen());
-  const [boardOrientation, setBoardOrientation] = useState<"white" | "black">(
-    myColor
-  );
 
   const [moveHistory, setMoveHistory] = useState<string[]>([]);
-  const [gameHistory, setGameHistory] = useState<GameHistoryItem[]>([]);
+  const [, setGameHistory] = useState<GameHistoryItem[]>([]);
   const [statusMessage, setStatusMessage] = useState(
-    isMultiplayer ? "Waiting for opponent..." : "White to move"
+    isMultiplayer ? "Connecting..." : "White to move"
   );
   const [lastMove, setLastMove] = useState<{ from: string; to: string } | null>(
     null
   );
 
-  const [whiteTime, setWhiteTime] = useState(0);
-  const [blackTime, setBlackTime] = useState(0);
+  // FIX: Initialize clocks to 0 for multiplayer — they get set on GAME_START
+  //      For solo, they get set by the effectiveTimeControl effect
+  const [whiteTime, setWhiteTime] = useState(isMultiplayer ? 0 : 600);
+  const [blackTime, setBlackTime] = useState(isMultiplayer ? 0 : 600);
   const [increment, setIncrement] = useState(0);
   const [currentTurn, setCurrentTurn] = useState<"w" | "b">("w");
 
@@ -89,14 +90,16 @@ const StandardChessPage: React.FC<StandardChessPageProps> = ({
     "connecting" | "waiting" | "playing" | "disconnected"
   >("connecting");
 
-  // Game state refs
+  // FIX: clockStarted gate — clock only ticks after GAME_START is received
   const [clockStarted, setClockStarted] = useState(false);
   const clockStartedRef = useRef(false);
+  // FIX: gameStarted gate — prevents premature GAME_OVER processing
+  const gameStartedRef = useRef(false);
+
   const gameOverRef = useRef(false);
   const isSoundOnRef = useRef(true);
   const incrementRef = useRef(0);
   const currentTurnRef = useRef<"w" | "b">("w");
-  const myColorRef = useRef<"white" | "black">(myColor);
 
   // Time warning flags
   const whiteTimeWarned30 = useRef(false);
@@ -114,27 +117,19 @@ const StandardChessPage: React.FC<StandardChessPageProps> = ({
     black: string[];
   }>({ white: [], black: [] });
 
+  const [boardOrientation, setBoardOrientation] = useState<"white" | "black">(
+    myColor
+  );
+
   // ------- Basic sync effects -------
-  useEffect(() => {
-    gameOverRef.current = gameOver;
-  }, [gameOver]);
-
-  useEffect(() => {
-    isSoundOnRef.current = isSoundOn;
-  }, [isSoundOn]);
-
-  useEffect(() => {
-    currentTurnRef.current = currentTurn;
-  }, [currentTurn]);
-
-  useEffect(() => {
-    incrementRef.current = increment;
-  }, [increment]);
+  useEffect(() => { gameOverRef.current = gameOver; }, [gameOver]);
+  useEffect(() => { isSoundOnRef.current = isSoundOn; }, [isSoundOn]);
+  useEffect(() => { currentTurnRef.current = currentTurn; }, [currentTurn]);
+  useEffect(() => { incrementRef.current = increment; }, [increment]);
 
   // Responsive board width
   useEffect(() => {
     const handleResize = () => {
-      if (typeof window === "undefined") return;
       const w = window.innerWidth;
       let width = 480;
       if (w >= 1600) width = 520;
@@ -165,8 +160,9 @@ const StandardChessPage: React.FC<StandardChessPageProps> = ({
     setEffectiveTimeControl(tc || timeControl || "10+0");
   }, [routeState, timeControl]);
 
-  // Init time control
+  // FIX: Solo only — init clocks from time control. Multiplayer clocks are set in GAME_START.
   useEffect(() => {
+    if (isMultiplayer) return; // multiplayer clocks set on GAME_START
     const [mainPart, incStr] = effectiveTimeControl.split("+");
     let minutesPart = mainPart;
     if (minutesPart.includes("/")) minutesPart = minutesPart.split("/")[0];
@@ -183,7 +179,7 @@ const StandardChessPage: React.FC<StandardChessPageProps> = ({
     whiteTimeWarned10.current = false;
     blackTimeWarned30.current = false;
     blackTimeWarned10.current = false;
-  }, [effectiveTimeControl]);
+  }, [effectiveTimeControl, isMultiplayer]);
 
   // Initialize game recorder (solo only)
   useEffect(() => {
@@ -216,20 +212,25 @@ const StandardChessPage: React.FC<StandardChessPageProps> = ({
       const token = await getAccessToken();
       if (!token || cancelled) return;
 
-      const wsUrl = `ws://localhost:8080/api/game/${mpState.gameId}?token=${token}&gameId=${mpState.gameId}`;
+      const wsUrl = `ws://localhost:8080/api/game/${mpState.gameId}?token=${token}`;
+      console.log("🔌 Connecting to game WS:", wsUrl);
       const ws = new WebSocket(wsUrl);
       wsRef.current = ws;
       setMpConnectionStatus("connecting");
 
       ws.onopen = () => {
+        if (cancelled) return;
         console.log("🎮 Game WS connected");
         setMpConnectionStatus("waiting");
+        setStatusMessage("Waiting for opponent...");
       };
 
       ws.onmessage = (event) => {
         if (cancelled) return;
         try {
-          handleServerMessage(JSON.parse(event.data));
+          const data = JSON.parse(event.data);
+          console.log("📨 Server message:", data.type, data);
+          handleServerMessage(data);
         } catch (e) {
           console.error("Failed to parse WS message:", e);
         }
@@ -237,12 +238,12 @@ const StandardChessPage: React.FC<StandardChessPageProps> = ({
 
       ws.onerror = (err) => {
         console.error("❌ Game WS error:", err);
-        setMpConnectionStatus("disconnected");
+        if (!cancelled) setMpConnectionStatus("disconnected");
       };
 
       ws.onclose = () => {
         console.log("🔌 Game WS closed");
-        if (!gameOverRef.current) {
+        if (!cancelled && !gameOverRef.current) {
           setMpConnectionStatus("disconnected");
           setStatusMessage("Connection lost");
         }
@@ -255,35 +256,125 @@ const StandardChessPage: React.FC<StandardChessPageProps> = ({
       cancelled = true;
       if (wsRef.current) wsRef.current.close();
     };
-  }, [isMultiplayer, mpState?.gameId]);
+  }, [isMultiplayer, mpState?.gameId]); // eslint-disable-line
+
+  // FIX: Auto-resign when player leaves (clicks back, closes tab, or goes offline)
+  useEffect(() => {
+    if (!isMultiplayer || !gameStartedRef.current) return;
+
+    const handleBeforeUnload = () => {
+      // Send resignation message to opponent
+      if (wsRef.current?.readyState === WebSocket.OPEN) {
+        sendMessage({ type: "RESIGN" });
+      }
+    };
+
+    const handlePopState = () => {
+      // Handle back button
+      console.log("🔙 Back button pressed - auto resigning");
+      if (wsRef.current?.readyState === WebSocket.OPEN) {
+        sendMessage({ type: "RESIGN" });
+      }
+      gameOverRef.current = true;
+    };
+
+    window.addEventListener("beforeunload", handleBeforeUnload);
+    window.addEventListener("popstate", handlePopState);
+
+    return () => {
+      window.removeEventListener("beforeunload", handleBeforeUnload);
+      window.removeEventListener("popstate", handlePopState);
+    };
+  }, [isMultiplayer]);
+
+  // FIX: Timeout to detect if GAME_START isn't received (backend issue)
+  useEffect(() => {
+    if (!isMultiplayer || gameStartedRef.current) return;
+    
+    const timeoutId = setTimeout(() => {
+      if (!gameStartedRef.current && mpConnectionStatus === "waiting") {
+        console.warn("⚠️ GAME_START not received after 30 seconds - possible backend issue");
+        setStatusMessage("⚠️ Game start delayed - checking server...");
+      }
+    }, 30000); // 30 second timeout
+
+    return () => clearTimeout(timeoutId);
+  }, [isMultiplayer, mpConnectionStatus]);
 
   // ── Handle incoming WebSocket messages ────────────────────────────────────
   const handleServerMessage = useCallback(
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (data: any) => {
       switch (data.type) {
-        case "GAME_START": {
-          gameRef.current = new Chess();
-          setFen(gameRef.current.fen());
-          // Reset clock from server-confirmed timeControl so both clients are in sync
-          const tc = (data.timeControl as string) || "10+0";
-          const mins = Number(tc.split("+")[0]) || 0;
-          const totalSecs = mins * 60;
-          setWhiteTime(totalSecs);
-          setBlackTime(totalSecs);
-          clockStartedRef.current = true;
-          setClockStarted(true); // state change triggers clock effect even if currentTurn stays "w"
-          setCurrentTurn("w");
-          currentTurnRef.current = "w";
-          setMpConnectionStatus("playing");
-          setStatusMessage(
-            myColorRef.current === "white" ? "Your turn" : "Opponent's turn"
-          );
+
+        case "WAITING_FOR_OPPONENT": {
+          console.log("⏳ Waiting for opponent...");
+          setMpConnectionStatus("waiting");
+          setStatusMessage("Waiting for opponent to connect...");
           break;
         }
 
-        case "WAITING_FOR_OPPONENT": {
-          setMpConnectionStatus("waiting");
-          setStatusMessage("Waiting for opponent to connect...");
+        case "GAME_START": {
+          console.log("🚀 GAME_START received:", data);
+
+          // FIX: Parse time control from GAME_START message (backend should provide this)
+          // Fallback to mpState.timeControl if not provided
+          let tc: string = (data.timeControl as string) || mpState?.timeControl || "10+0";
+          console.log("🕒 Time control from server:", tc);
+          
+          // Handle encoded time control (may come as "10%2B0" from URL)
+          tc = tc.replace("%2B", "+").replace("%2b", "+");
+          
+          const [mainPart, incStr] = tc.split("+");
+          let minutes = Number(mainPart) || 10;
+          let inc = Number(incStr) || 0;
+          
+          // Validation: ensure positive values
+          if (minutes <= 0) minutes = 10;
+          if (inc < 0) inc = 0;
+          
+          const totalSecs = Math.max(60, minutes * 60);
+          console.log("🕐 Parsed time - Minutes:", minutes, "Increment:", inc, "Total Seconds:", totalSecs);
+
+          // Reset board to starting position
+          gameRef.current = new Chess();
+          setFen(gameRef.current.fen());
+          setMoveHistory([]);
+          setGameHistory([]);
+          setLastMove(null);
+          setCapturedPieces({ white: [], black: [] });
+          setGameOver(false);
+          setGameResult(null);
+          gameOverRef.current = false;
+
+          // FIX: Set clocks from the server's time control
+          setWhiteTime(totalSecs);
+          setBlackTime(totalSecs);
+          setIncrement(inc);
+          incrementRef.current = inc;
+
+          // FIX: Reset time warnings
+          whiteTimeWarned30.current = false;
+          whiteTimeWarned10.current = false;
+          blackTimeWarned30.current = false;
+          blackTimeWarned10.current = false;
+
+          // FIX: Set myColor correctly from server data
+          const myColorFromServer = (data.myColor as "white" | "black") || mpState?.color || "white";
+          myColorRef.current = myColorFromServer;
+          console.log("🎨 My color:", myColorFromServer);
+
+          // FIX: Start the clock
+          clockStartedRef.current = true;
+          setClockStarted(true);
+          gameStartedRef.current = true;
+
+          setCurrentTurn("w");
+          currentTurnRef.current = "w";
+          setMpConnectionStatus("playing");
+
+          const myTurn = myColorRef.current === "white";
+          setStatusMessage(myTurn ? "Your turn" : "Opponent's turn");
           break;
         }
 
@@ -333,10 +424,9 @@ const StandardChessPage: React.FC<StandardChessPageProps> = ({
               }
 
               if (game.isCheckmate()) {
-                const winner = movedColor;
+                const iWin = movedColor === myColorRef.current;
                 setGameOver(true);
                 gameOverRef.current = true;
-                const iWin = winner === myColorRef.current;
                 setGameResult(iWin ? "You win! by checkmate" : "You lose! by checkmate");
                 setStatusMessage("Checkmate!");
               } else if (game.isDraw()) {
@@ -348,9 +438,7 @@ const StandardChessPage: React.FC<StandardChessPageProps> = ({
                 setStatusMessage("Check!");
               } else {
                 setStatusMessage(
-                  nextTurn === myColorRef.current
-                    ? "Your turn"
-                    : "Opponent's turn"
+                  nextTurn === myColorRef.current ? "Your turn" : "Opponent's turn"
                 );
               }
             }
@@ -361,19 +449,35 @@ const StandardChessPage: React.FC<StandardChessPageProps> = ({
         }
 
         case "GAME_OVER": {
+          // FIX: Ignore GAME_OVER if the game hasn't started yet (premature disconnect)
+          if (!gameStartedRef.current) {
+            console.warn("⚠️ Ignoring GAME_OVER — game hasn't started yet. Gamedata:", data);
+            break;
+          }
+
+          if (gameOverRef.current) {
+            console.warn("⚠️ GAME_OVER already processed, ignoring duplicate");
+            break;
+          }
+
           setGameOver(true);
           gameOverRef.current = true;
-          if (data.result === "DRAW") {
-            setGameResult(`Draw by ${(data.reason || "").toLowerCase()}`);
+
+          const winner = data.winner as string;
+          const reason = data.reason as string || "Game over";
+          console.log("🏁 Game over - Winner:", winner, "Reason:", reason);
+
+          if (winner === "draw" || data.result === "DRAW") {
+            setGameResult(`Draw — ${reason.toLowerCase()}`);
             setWinner(null);
           } else {
             const iWin =
-              (data.winner === "white" && myColorRef.current === "white") ||
-              (data.winner === "black" && myColorRef.current === "black");
+              (winner === "white" && myColorRef.current === "white") ||
+              (winner === "black" && myColorRef.current === "black");
             setGameResult(iWin ? "You win!" : "You lose!");
             setWinner(iWin ? "You" : "Opponent");
           }
-          setStatusMessage(data.reason || "Game over");
+          setStatusMessage(reason);
           break;
         }
 
@@ -389,8 +493,7 @@ const StandardChessPage: React.FC<StandardChessPageProps> = ({
             () =>
               setStatusMessage(
                 currentTurnRef.current === (myColorRef.current === "white" ? "w" : "b")
-                  ? "Your turn"
-                  : "Opponent's turn"
+                  ? "Your turn" : "Opponent's turn"
               ),
             2000
           );
@@ -398,13 +501,14 @@ const StandardChessPage: React.FC<StandardChessPageProps> = ({
         }
 
         case "OPPONENT_DISCONNECTED": {
+          // FIX: Only update status, don't end the game immediately
           setStatusMessage("Opponent disconnected");
           setMpConnectionStatus("disconnected");
           break;
         }
       }
     },
-    [] // myColorRef is a ref so no dep needed
+    [mpState?.timeControl] // eslint-disable-line
   );
 
   // ── WebSocket send helper ──────────────────────────────────────────────────
@@ -418,8 +522,8 @@ const StandardChessPage: React.FC<StandardChessPageProps> = ({
   const playSound = (soundType: "move" | "capture" | "check" | "gameEnd") => {
     if (!isSoundOnRef.current) return;
     try {
-      const audioContext = new (window.AudioContext ||
-        (window as any).webkitAudioContext)();
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
       const oscillator = audioContext.createOscillator();
       const gainNode = audioContext.createGain();
       oscillator.connect(gainNode);
@@ -437,7 +541,7 @@ const StandardChessPage: React.FC<StandardChessPageProps> = ({
     }
   };
 
-  // ---------- Helpers ----------
+  // ---------- Flag / timeout ----------
   function handleFlag(flagged: "white" | "black") {
     if (gameOverRef.current) return;
     const winColor = flagged === "white" ? "Black" : "White";
@@ -504,7 +608,10 @@ const StandardChessPage: React.FC<StandardChessPageProps> = ({
       else gameRecorderRef.current.updateTime("white", whiteTime);
     }
 
-    if (!clockStartedRef.current) { clockStartedRef.current = true; setClockStarted(true); }
+    if (!clockStartedRef.current) {
+      clockStartedRef.current = true;
+      setClockStarted(true);
+    }
 
     const sideToMove = game.turn();
 
@@ -642,7 +749,7 @@ const StandardChessPage: React.FC<StandardChessPageProps> = ({
   }
 
   function handleNewGame() {
-    if (isMultiplayer) return; // no new game in multiplayer
+    if (isMultiplayer) return;
     const newGame = new Chess();
     gameRef.current = newGame;
     setFen(newGame.fen());
@@ -653,12 +760,13 @@ const StandardChessPage: React.FC<StandardChessPageProps> = ({
     currentTurnRef.current = "w";
     setGameOver(false);
     setWinner(null);
+    setGameResult(null);
     gameOverRef.current = false;
     clockStartedRef.current = false;
     setClockStarted(false);
     setLastMove(null);
     setCapturedPieces({ white: [], black: [] });
-    const [mainPart, incStr] = effectiveTimeControl.split("+");
+    const [mainPart] = effectiveTimeControl.split("+");
     let minutesPart = mainPart;
     if (minutesPart.includes("/")) minutesPart = minutesPart.split("/")[0];
     const minutes = Number(minutesPart) || 0;
@@ -732,8 +840,9 @@ const StandardChessPage: React.FC<StandardChessPageProps> = ({
 
   const onDrop = (sourceSquare: string, targetSquare: string) => {
     if (gameOverRef.current) return false;
-    // Solo: only white can move; Multiplayer: only your color can move
     if (isMultiplayer) {
+      // FIX: Only allow moves when game has started
+      if (!gameStartedRef.current) return false;
       const myTurn = myColorRef.current === "white" ? "w" : "b";
       if (gameRef.current.turn() !== myTurn) return false;
     } else {
@@ -753,11 +862,19 @@ const StandardChessPage: React.FC<StandardChessPageProps> = ({
   };
 
   const handleBack = () => {
+    if (isMultiplayer && gameStartedRef.current && !gameOverRef.current) {
+      // Auto-resign in multiplayer if game is still active
+      console.log("🔙 Going back - auto resigning");
+      if (wsRef.current?.readyState === WebSocket.OPEN) {
+        sendMessage({ type: "RESIGN" });
+      }
+      gameOverRef.current = true;
+    }
     if (window.history.length > 1) navigate(-1);
     else navigate("/home");
   };
 
-  // Clock ticker
+  // Clock ticker — only runs when clockStarted is true
   useEffect(() => {
     if (gameOver || isPaused || !clockStarted) return;
     let timerId: number;
@@ -781,6 +898,7 @@ const StandardChessPage: React.FC<StandardChessPageProps> = ({
       }, 1000);
     }
     return () => window.clearInterval(timerId);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentTurn, gameOver, isPaused, clockStarted]);
 
   // Multiplayer: send periodic time updates
@@ -807,16 +925,25 @@ const StandardChessPage: React.FC<StandardChessPageProps> = ({
     };
     const timer = setTimeout(saveGame, 500);
     return () => clearTimeout(timer);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [gameOver]);
 
-  // ── Derived display values ─────────────────────────────────────────────────
-  const opponentName = mpState?.opponentName || "Opponent";
-  const opponentPlayer = myColor === "white" ? mpState?.blackPlayer : mpState?.whitePlayer;
+  // ── FIX: Derived display values ────────────────────────────────────────────
+  // Use the pre-calculated opponent name from MatchmakingPage
+  const opponentDisplayName = isMultiplayer
+    ? mpState?.opponentName || "Opponent"
+    : "ChessMaster AI";
+  const opponentColor = myColor === "white" ? "black" : "white";
+
+  // Clocks relative to board orientation
   const opponentClock = myColor === "white" ? blackTime : whiteTime;
-  const myClock = myColor === "white" ? whiteTime : blackTime;
+  const myClock       = myColor === "white" ? whiteTime : blackTime;
 
   const isDraggable = isMultiplayer
-    ? !gameOver && gameRef.current.turn() === (myColor === "white" ? "w" : "b") && !isPaused
+    ? !gameOver &&
+      gameStartedRef.current &&
+      gameRef.current.turn() === (myColor === "white" ? "w" : "b") &&
+      !isPaused
     : !gameOver && gameRef.current.turn() === "w" && !isPaused;
 
   return (
@@ -830,26 +957,38 @@ const StandardChessPage: React.FC<StandardChessPageProps> = ({
           </button>
           {isMultiplayer && (
             <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
-              <span className="chess-top-badge" style={{
-                background: mpConnectionStatus === "playing" ? "rgba(0,200,100,0.2)"
-                  : mpConnectionStatus === "waiting" ? "rgba(255,200,0,0.2)"
-                  : "rgba(255,80,80,0.2)",
-                color: mpConnectionStatus === "playing" ? "#00c864"
-                  : mpConnectionStatus === "waiting" ? "#ffc800"
-                  : "#ff5050",
-                border: `1px solid currentColor`,
-                padding: "4px 12px",
-                borderRadius: "20px",
-                fontSize: "0.8rem",
-                fontWeight: 600,
-              }}>
-                {mpConnectionStatus === "playing" ? "● Live"
-                  : mpConnectionStatus === "waiting" ? "⏳ Waiting"
-                  : mpConnectionStatus === "connecting" ? "⟳ Connecting"
+              <span
+                className="chess-top-badge"
+                style={{
+                  background:
+                    mpConnectionStatus === "playing"
+                      ? "rgba(0,200,100,0.2)"
+                      : mpConnectionStatus === "waiting"
+                      ? "rgba(255,200,0,0.2)"
+                      : "rgba(255,80,80,0.2)",
+                  color:
+                    mpConnectionStatus === "playing"
+                      ? "#00c864"
+                      : mpConnectionStatus === "waiting"
+                      ? "#ffc800"
+                      : "#ff5050",
+                  border: `1px solid currentColor`,
+                  padding: "4px 12px",
+                  borderRadius: "20px",
+                  fontSize: "0.8rem",
+                  fontWeight: 600,
+                }}
+              >
+                {mpConnectionStatus === "playing"
+                  ? "● Live"
+                  : mpConnectionStatus === "waiting"
+                  ? "⏳ Waiting for opponent"
+                  : mpConnectionStatus === "connecting"
+                  ? "⟳ Connecting"
                   : "✕ Disconnected"}
               </span>
               <span style={{ color: "#888", fontSize: "0.85rem" }}>
-                ⏱ {effectiveTimeControl}
+                ⏱ {mpState?.timeControl || effectiveTimeControl}
               </span>
             </div>
           )}
@@ -868,19 +1007,38 @@ const StandardChessPage: React.FC<StandardChessPageProps> = ({
             </div>
             <div className="chess-top-subtitle">
               {isMultiplayer ? (
-                <>You are playing as <strong style={{ color: myColor === "white" ? "#fff" : "#aaa" }}>{myColor}</strong> — {statusMessage}</>
+                <>
+                  You are playing as{" "}
+                  <strong style={{ color: myColor === "white" ? "#fff" : "#aaa" }}>
+                    {myColor}
+                  </strong>{" "}
+                  — {statusMessage}
+                </>
               ) : (
-                <>Time Control: <span className="chess-top-subtitle-strong">{effectiveTimeControl}</span> | Drag pieces to make your move</>
+                <>
+                  Time Control:{" "}
+                  <span className="chess-top-subtitle-strong">
+                    {effectiveTimeControl}
+                  </span>{" "}
+                  | Drag pieces to make your move
+                </>
               )}
             </div>
           </div>
           <div className="chess-top-right">
             {!isMultiplayer && (
               <>
-                <button className="chess-top-button" onClick={() => setIsPaused((p) => !p)} disabled={gameOver}>
+                <button
+                  className="chess-top-button"
+                  onClick={() => setIsPaused((p) => !p)}
+                  disabled={gameOver}
+                >
                   {isPaused ? "▶ Resume Game" : "⏸ Pause Game"}
                 </button>
-                <button className="chess-top-button secondary" onClick={handleNewGame}>
+                <button
+                  className="chess-top-button secondary"
+                  onClick={handleNewGame}
+                >
                   🔄 New Game
                 </button>
               </>
@@ -891,54 +1049,71 @@ const StandardChessPage: React.FC<StandardChessPageProps> = ({
         <div className="chess-main-layout">
           {/* LEFT COLUMN - BOARD */}
           <div className="chess-left-column">
+
             {/* Opponent player card (shown above board in multiplayer) */}
             {isMultiplayer && (
-              <div className={`chess-player-card ${opponentClock <= 30 ? "low-time" : ""}`}
-                style={{ marginBottom: "8px" }}>
+              <div
+                className={`chess-player-card ${opponentClock <= 30 && clockStarted ? "low-time" : ""}`}
+                style={{ marginBottom: "8px" }}
+              >
                 <div className="player-left">
                   <div className="player-avatar ai">
-                    {(opponentPlayer || opponentName)[0]?.toUpperCase()}
+                    {opponentDisplayName[0]?.toUpperCase() || "?"}
                   </div>
                   <div>
-                    <div className="player-name">{opponentPlayer || opponentName}</div>
+                    {/* FIX: Show the correct opponent name */}
+                    <div className="player-name">{opponentDisplayName}</div>
                     <div className="player-rating">
-                      {myColor === "white" ? "⬛ Black" : "⬜ White"}
+                      {opponentColor === "black" ? "⬛ Black" : "⬜ White"}
                     </div>
                   </div>
                 </div>
-                <div className={`player-clock ${opponentClock <= 30 ? "low-time" : ""} ${opponentClock <= 10 ? "critical-time" : ""}`}>
-                  {formatTime(opponentClock)}
+                <div
+                  className={`player-clock ${opponentClock <= 30 && clockStarted ? "low-time" : ""} ${opponentClock <= 10 && clockStarted ? "critical-time" : ""}`}
+                  style={{ color: !clockStarted ? "#666" : undefined }}
+                >
+                  {clockStarted ? formatTime(opponentClock) : formatTime(opponentClock)}
                 </div>
               </div>
             )}
 
             <div className="chess-board-card">
               <Chessboard
-                {...({
-                  position: fen,
-                  onPieceDrop: onDrop,
-                  boardOrientation: isMultiplayer ? myColor : boardOrientation,
-                  boardWidth,
-                  arePiecesDraggable: isDraggable,
-                  customSquareStyles: getSquareStyles(),
-                  customBoardStyle: {
-                    borderRadius: "16px",
-                    boxShadow: "0 20px 60px rgba(0,0,0,0.9)",
-                  },
-                } as any)}
+                position={fen}
+                onPieceDrop={onDrop}
+                boardOrientation={isMultiplayer ? myColor : boardOrientation}
+                boardWidth={boardWidth}
+                arePiecesDraggable={isDraggable}
+                customSquareStyles={getSquareStyles()}
+                customBoardStyle={{
+                  borderRadius: "16px",
+                  boxShadow: "0 20px 60px rgba(0,0,0,0.9)",
+                }}
               />
 
               <div className="chess-board-footer">
                 {!isMultiplayer && (
-                  <button className="chess-small-btn" onClick={() =>
-                    setBoardOrientation((p) => p === "white" ? "black" : "white")}>
+                  <button
+                    className="chess-small-btn"
+                    onClick={() =>
+                      setBoardOrientation((p) =>
+                        p === "white" ? "black" : "white"
+                      )
+                    }
+                  >
                     🔄 Flip Board
                   </button>
                 )}
-                <button className="chess-small-btn" onClick={() => setShowLegalMoves((p) => !p)}>
+                <button
+                  className="chess-small-btn"
+                  onClick={() => setShowLegalMoves((p) => !p)}
+                >
                   {showLegalMoves ? "👁 Hide Hints" : "👁 Show Hints"}
                 </button>
-                <button className="chess-small-btn" onClick={() => setIsSoundOn((p) => !p)}>
+                <button
+                  className="chess-small-btn"
+                  onClick={() => setIsSoundOn((p) => !p)}
+                >
                   {isSoundOn ? "🔊 Sound On" : "🔇 Sound Off"}
                 </button>
               </div>
@@ -946,8 +1121,10 @@ const StandardChessPage: React.FC<StandardChessPageProps> = ({
 
             {/* My player card (shown below board in multiplayer) */}
             {isMultiplayer && (
-              <div className={`chess-player-card you-card ${myClock <= 30 ? "low-time" : ""}`}
-                style={{ marginTop: "8px" }}>
+              <div
+                className={`chess-player-card you-card ${myClock <= 30 && clockStarted ? "low-time" : ""}`}
+                style={{ marginTop: "8px" }}
+              >
                 <div className="player-left">
                   <div className="player-avatar you">Y</div>
                   <div>
@@ -957,7 +1134,10 @@ const StandardChessPage: React.FC<StandardChessPageProps> = ({
                     </div>
                   </div>
                 </div>
-                <div className={`player-clock ${myClock <= 30 ? "low-time" : ""} ${myClock <= 10 ? "critical-time" : ""}`}>
+                <div
+                  className={`player-clock ${myClock <= 30 && clockStarted ? "low-time" : ""} ${myClock <= 10 && clockStarted ? "critical-time" : ""}`}
+                  style={{ color: !clockStarted ? "#666" : undefined }}
+                >
                   {formatTime(myClock)}
                 </div>
               </div>
@@ -966,15 +1146,26 @@ const StandardChessPage: React.FC<StandardChessPageProps> = ({
             {/* Game Controls */}
             <div className="chess-controls-panel">
               {!isMultiplayer && (
-                <button className="chess-control-btn" onClick={handleUndo}
-                  disabled={gameOver || moveHistory.length < 2}>
+                <button
+                  className="chess-control-btn"
+                  onClick={handleUndo}
+                  disabled={gameOver || moveHistory.length < 2}
+                >
                   ↩️ Undo Move
                 </button>
               )}
-              <button className="chess-control-btn" onClick={handleOfferDraw} disabled={gameOver}>
-                🤝 {isMultiplayer ? "Offer Draw" : "Offer Draw"}
+              <button
+                className="chess-control-btn"
+                onClick={handleOfferDraw}
+                disabled={gameOver || (isMultiplayer && !gameStartedRef.current)}
+              >
+                🤝 Offer Draw
               </button>
-              <button className="chess-control-btn danger" onClick={handleResign} disabled={gameOver}>
+              <button
+                className="chess-control-btn danger"
+                onClick={handleResign}
+                disabled={gameOver || (isMultiplayer && !gameStartedRef.current)}
+              >
                 🏳️ Resign
               </button>
             </div>
@@ -982,45 +1173,139 @@ const StandardChessPage: React.FC<StandardChessPageProps> = ({
 
           {/* RIGHT COLUMN - INFO */}
           <div className="chess-right-column">
+
+            {/* Waiting overlay (multiplayer, not yet started) */}
+            {isMultiplayer && !gameStartedRef.current && mpConnectionStatus !== "disconnected" && !gameOver && (
+              <div
+                style={{
+                  background: "rgba(255,215,0,0.08)",
+                  border: "1px solid rgba(255,215,0,0.25)",
+                  borderRadius: "16px",
+                  padding: "24px",
+                  marginBottom: "16px",
+                  textAlign: "center",
+                }}
+              >
+                <div style={{ fontSize: "2rem", marginBottom: "8px" }}>⏳</div>
+                <div
+                  style={{
+                    color: "#ffd700",
+                    fontSize: "1rem",
+                    fontWeight: 600,
+                    marginBottom: "8px",
+                  }}
+                >
+                  {mpConnectionStatus === "waiting"
+                    ? "Waiting for opponent to connect..."
+                    : "Connecting to game server..."}
+                </div>
+                <div style={{ color: "#888", fontSize: "0.85rem" }}>
+                  You are playing as{" "}
+                  <strong style={{ color: myColor === "white" ? "#fff" : "#ccc" }}>
+                    {myColor}
+                  </strong>
+                </div>
+              </div>
+            )}
+
             {/* Draw offer banner (multiplayer only) */}
             {isMultiplayer && drawOfferReceived && (
-              <div style={{
-                background: "rgba(255,215,0,0.1)", border: "1px solid rgba(255,215,0,0.4)",
-                borderRadius: "12px", padding: "16px", marginBottom: "16px", textAlign: "center",
-              }}>
-                <p style={{ color: "#ffd700", marginBottom: "12px", fontWeight: 600 }}>
+              <div
+                style={{
+                  background: "rgba(255,215,0,0.1)",
+                  border: "1px solid rgba(255,215,0,0.4)",
+                  borderRadius: "12px",
+                  padding: "16px",
+                  marginBottom: "16px",
+                  textAlign: "center",
+                }}
+              >
+                <p
+                  style={{
+                    color: "#ffd700",
+                    marginBottom: "12px",
+                    fontWeight: 600,
+                  }}
+                >
                   🤝 Opponent offers a draw
                 </p>
-                <div style={{ display: "flex", gap: "8px", justifyContent: "center" }}>
-                  <button onClick={handleAcceptDraw} style={{
-                    background: "rgba(0,200,100,0.2)", border: "1px solid #00c864",
-                    color: "#00c864", padding: "8px 20px", borderRadius: "8px", cursor: "pointer",
-                  }}>✓ Accept</button>
-                  <button onClick={handleDeclineDraw} style={{
-                    background: "rgba(255,80,80,0.2)", border: "1px solid #ff5050",
-                    color: "#ff5050", padding: "8px 20px", borderRadius: "8px", cursor: "pointer",
-                  }}>✗ Decline</button>
+                <div
+                  style={{
+                    display: "flex",
+                    gap: "8px",
+                    justifyContent: "center",
+                  }}
+                >
+                  <button
+                    onClick={handleAcceptDraw}
+                    style={{
+                      background: "rgba(0,200,100,0.2)",
+                      border: "1px solid #00c864",
+                      color: "#00c864",
+                      padding: "8px 20px",
+                      borderRadius: "8px",
+                      cursor: "pointer",
+                    }}
+                  >
+                    ✓ Accept
+                  </button>
+                  <button
+                    onClick={handleDeclineDraw}
+                    style={{
+                      background: "rgba(255,80,80,0.2)",
+                      border: "1px solid #ff5050",
+                      color: "#ff5050",
+                      padding: "8px 20px",
+                      borderRadius: "8px",
+                      cursor: "pointer",
+                    }}
+                  >
+                    ✗ Decline
+                  </button>
                 </div>
               </div>
             )}
 
             {/* Game over banner (multiplayer) */}
             {isMultiplayer && gameOver && gameResult && (
-              <div style={{
-                background: "rgba(255,215,0,0.08)", border: "1px solid rgba(255,215,0,0.3)",
-                borderRadius: "16px", padding: "24px", marginBottom: "16px", textAlign: "center",
-              }}>
+              <div
+                style={{
+                  background: "rgba(255,215,0,0.08)",
+                  border: "1px solid rgba(255,215,0,0.3)",
+                  borderRadius: "16px",
+                  padding: "24px",
+                  marginBottom: "16px",
+                  textAlign: "center",
+                }}
+              >
                 <div style={{ fontSize: "2.5rem", marginBottom: "8px" }}>
-                  {gameResult.includes("win") ? "🏆" : "🤝"}
+                  {gameResult.toLowerCase().includes("win") ? "🏆" : gameResult.toLowerCase().includes("lose") ? "😞" : "🤝"}
                 </div>
-                <div style={{ color: "#ffd700", fontSize: "1.2rem", fontWeight: 700, marginBottom: "16px" }}>
+                <div
+                  style={{
+                    color: "#ffd700",
+                    fontSize: "1.2rem",
+                    fontWeight: 700,
+                    marginBottom: "16px",
+                  }}
+                >
                   {gameResult}
                 </div>
-                <button onClick={() => navigate("/home")} style={{
-                  background: "rgba(255,215,0,0.15)", border: "1px solid rgba(255,215,0,0.4)",
-                  color: "#ffd700", padding: "10px 24px", borderRadius: "8px", cursor: "pointer",
-                  fontSize: "0.95rem", fontWeight: 600,
-                }}>Back to Home</button>
+                <button
+                  onClick={() => navigate("/home")}
+                  style={{
+                    background: "rgba(255,215,0,0.15)",
+                    border: "1px solid rgba(255,215,0,0.4)",
+                    color: "#ffd700",
+                    padding: "10px 24px",
+                    borderRadius: "8px",
+                    cursor: "pointer",
+                    fontSize: "0.95rem",
+                    fontWeight: 600,
+                  }}
+                >
+                  Back to Home
+                </button>
               </div>
             )}
 
@@ -1035,7 +1320,9 @@ const StandardChessPage: React.FC<StandardChessPageProps> = ({
                       <div className="player-rating">⭐ Rating: 1923</div>
                     </div>
                   </div>
-                  <div className={`player-clock ${blackTime <= 30 ? "low-time" : ""} ${blackTime <= 10 ? "critical-time" : ""}`}>
+                  <div
+                    className={`player-clock ${blackTime <= 30 ? "low-time" : ""} ${blackTime <= 10 ? "critical-time" : ""}`}
+                  >
                     {formatTime(blackTime)}
                   </div>
                 </div>
@@ -1047,7 +1334,9 @@ const StandardChessPage: React.FC<StandardChessPageProps> = ({
                       <div className="player-rating">⭐ Rating: 1847</div>
                     </div>
                   </div>
-                  <div className={`player-clock ${whiteTime <= 30 ? "low-time" : ""} ${whiteTime <= 10 ? "critical-time" : ""}`}>
+                  <div
+                    className={`player-clock ${whiteTime <= 30 ? "low-time" : ""} ${whiteTime <= 10 ? "critical-time" : ""}`}
+                  >
                     {formatTime(whiteTime)}
                   </div>
                 </div>
@@ -1057,12 +1346,16 @@ const StandardChessPage: React.FC<StandardChessPageProps> = ({
             {/* Captured Pieces (solo only) */}
             {!isMultiplayer && (
               <div className="chess-captured-panel">
-                <div className="panel-header"><span>⚔️ Captured Pieces</span></div>
+                <div className="panel-header">
+                  <span>⚔️ Captured Pieces</span>
+                </div>
                 <div className="captured-section">
                   <div className="captured-label">White captured:</div>
                   <div className="captured-pieces">
                     {capturedPieces.black.length > 0
-                      ? capturedPieces.black.map((p, i) => <span key={i} className="captured-piece">{p}</span>)
+                      ? capturedPieces.black.map((p, i) => (
+                          <span key={i} className="captured-piece">{p}</span>
+                        ))
                       : <span className="captured-empty">None</span>}
                   </div>
                 </div>
@@ -1070,7 +1363,9 @@ const StandardChessPage: React.FC<StandardChessPageProps> = ({
                   <div className="captured-label">Black captured:</div>
                   <div className="captured-pieces">
                     {capturedPieces.white.length > 0
-                      ? capturedPieces.white.map((p, i) => <span key={i} className="captured-piece">{p}</span>)
+                      ? capturedPieces.white.map((p, i) => (
+                          <span key={i} className="captured-piece">{p}</span>
+                        ))
                       : <span className="captured-empty">None</span>}
                   </div>
                 </div>
@@ -1081,19 +1376,30 @@ const StandardChessPage: React.FC<StandardChessPageProps> = ({
             <div className="chess-move-history-card">
               <div className="panel-header">
                 <span>♟️ Move History</span>
-                <span className="move-count">{Math.ceil(moveHistory.length / 2)} moves</span>
+                <span className="move-count">
+                  {Math.ceil(moveHistory.length / 2)} moves
+                </span>
               </div>
               <div className="move-history-list">
                 {moveHistory.length === 0 && (
-                  <div className="chess-history-empty">Game moves will be recorded here.</div>
-                )}
-                {Array.from({ length: Math.ceil(moveHistory.length / 2) }, (_, i) => (
-                  <div key={i} className="move-history-item">
-                    <span className="move-index">{i + 1}.</span>
-                    <span className="move-text white-move">{moveHistory[i * 2]}</span>
-                    <span className="move-text black-move">{moveHistory[i * 2 + 1] || ""}</span>
+                  <div className="chess-history-empty">
+                    Game moves will be recorded here.
                   </div>
-                ))}
+                )}
+                {Array.from(
+                  { length: Math.ceil(moveHistory.length / 2) },
+                  (_, i) => (
+                    <div key={i} className="move-history-item">
+                      <span className="move-index">{i + 1}.</span>
+                      <span className="move-text white-move">
+                        {moveHistory[i * 2]}
+                      </span>
+                      <span className="move-text black-move">
+                        {moveHistory[i * 2 + 1] || ""}
+                      </span>
+                    </div>
+                  )
+                )}
               </div>
             </div>
 
@@ -1103,7 +1409,9 @@ const StandardChessPage: React.FC<StandardChessPageProps> = ({
                 <div className="status-game-over">
                   {isMultiplayer
                     ? gameResult || "Game over"
-                    : winner ? `🏆 ${winner} wins!` : "🤝 Game drawn"}
+                    : winner
+                    ? `🏆 ${winner} wins!`
+                    : "🤝 Game drawn"}
                 </div>
               ) : (
                 <div className="status-active">

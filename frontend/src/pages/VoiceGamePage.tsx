@@ -4,12 +4,8 @@ import { Chess, Move } from "chess.js";
 import { Chessboard } from "react-chessboard";
 import Navbar from "../components/Navbar/Navbar";
 import "./VoiceGamePage.css";
-import deepgramTTSService from "../utils/deepgramTTSService";
-import deepgramVoiceCommandService from "../utils/deepgramVoiceCommandService";
-import { GlobalVoiceParser } from "../utils/globalVoiceParser";
 import gameService from "../api/games";
 import { GameRecorder } from "../utils/gameRecorder";
-import beepService from "../utils/beepService";
 import { stockfishService } from "../utils/stockfishService";
 import { getAccessToken } from "../utils/getAccessToken";
 
@@ -19,7 +15,8 @@ interface VoiceGamePageProps {
 }
 
 interface MultiplayerState {
-  gameId: string;
+  gameId: number;
+  gameUuid: string;
   color: "white" | "black";
   timeControl: string;
   opponentName: string;
@@ -29,18 +26,65 @@ interface MultiplayerState {
   blackPlayerId: number;
 }
 
-type VoiceStatus = "Executed" | "Error" | "Ignored";
-
-interface VoiceHistoryItem {
+interface GameHistoryItem {
   id: number;
-  text: string;
-  status: VoiceStatus;
+  move: string;
   timestamp: number;
+  player: "white" | "black";
+}
+
+// ---------- Voice recognition types ----------
+declare global {
+  interface Window {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    SpeechRecognition: any;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    webkitSpeechRecognition: any;
+  }
+}
+
+function parseVoiceMove(transcript: string, game: Chess): { from: string; to: string; promotion?: string } | null {
+  // Normalise
+  const t = transcript
+    .toLowerCase()
+    .replace(/alpha/g, "a").replace(/bravo/g, "b").replace(/charlie/g, "c")
+    .replace(/delta/g, "d").replace(/echo/g, "e").replace(/foxtrot/g, "f")
+    .replace(/golf/g, "g").replace(/hotel/g, "h")
+    .replace(/\bto\b/g, " ").replace(/\bmoves\b/g, "").replace(/\b(move|takes|takes|captures|capture)\b/g, " ")
+    .replace(/\s+/g, " ").trim();
+
+  // Try SAN directly (e.g. "e4", "Nf3", "O-O")
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const move = game.move(t.replace(/\s/g, ""), { sloppy: true } as any);
+    if (move) {
+      game.undo();
+      return { from: move.from, to: move.to, promotion: move.promotion };
+    }
+  } catch { /* not valid SAN */ }
+
+  // Try "e2 e4" / "e two e four" patterns
+  const rankWords: Record<string, string> = {
+    one: "1", two: "2", three: "3", four: "4",
+    five: "5", six: "6", seven: "7", eight: "8",
+  };
+  let normalised = t;
+  for (const [word, num] of Object.entries(rankWords)) {
+    normalised = normalised.replace(new RegExp(`\\b${word}\\b`, "g"), num);
+  }
+
+  const squarePattern = "[a-h][1-8]";
+  const match = normalised.match(new RegExp(`(${squarePattern})\\s*(${squarePattern})`, "i"));
+  if (match) {
+    return { from: match[1], to: match[2] };
+  }
+
+  return null;
 }
 
 // ---------- Component ----------
 const VoiceGamePage: React.FC<VoiceGamePageProps> = ({
-  timeControl = "3+0",
+  timeControl = "10+0",
 }) => {
   const location = useLocation();
   const navigate = useNavigate();
@@ -52,27 +96,27 @@ const VoiceGamePage: React.FC<VoiceGamePageProps> = ({
   const isMultiplayer = !!(routeState as MultiplayerState)?.gameId;
   const mpState = isMultiplayer ? (routeState as MultiplayerState) : null;
   const wsRef = useRef<WebSocket | null>(null);
-  const myColor = mpState?.color ?? "white";
-  const myColorRef = useRef<"white" | "black">(myColor);
+
+  // FIX: Use a ref for myColor so it's always fresh inside callbacks
+  const myColorRef = useRef<"white" | "black">(mpState?.color ?? "white");
+  const myColor = myColorRef.current;
 
   const [effectiveTimeControl, setEffectiveTimeControl] =
     useState<string>(timeControl);
 
   const gameRef = useRef(new Chess());
   const [fen, setFen] = useState(gameRef.current.fen());
-  const [boardOrientation, setBoardOrientation] = useState<"white" | "black">(
-    myColor
-  );
 
   const [moveHistory, setMoveHistory] = useState<string[]>([]);
-  const [voiceHistory, setVoiceHistory] = useState<VoiceHistoryItem[]>([]);
-  const [lastCommand, setLastCommand] = useState("");
+  const [, setGameHistory] = useState<GameHistoryItem[]>([]);
   const [statusMessage, setStatusMessage] = useState(
-    isMultiplayer ? "Waiting for opponent..." : "White to move"
+    isMultiplayer ? "Connecting..." : "White to move"
   );
+  const [lastMove, setLastMove] = useState<{ from: string; to: string } | null>(null);
 
-  const [whiteTime, setWhiteTime] = useState(0);
-  const [blackTime, setBlackTime] = useState(0);
+  // FIX: Initialize clocks to 0 for multiplayer — they get set on GAME_START
+  const [whiteTime, setWhiteTime] = useState(isMultiplayer ? 0 : 600);
+  const [blackTime, setBlackTime] = useState(isMultiplayer ? 0 : 600);
   const [increment, setIncrement] = useState(0);
   const [currentTurn, setCurrentTurn] = useState<"w" | "b">("w");
 
@@ -80,27 +124,28 @@ const VoiceGamePage: React.FC<VoiceGamePageProps> = ({
   const [gameOver, setGameOver] = useState(false);
   const [winner, setWinner] = useState<string | null>(null);
 
-  const [isListening, setIsListening] = useState(false);
-  const [voicePaused, setVoicePaused] = useState(false);
   const [isSoundOn, setIsSoundOn] = useState(true);
+  const [showLegalMoves, setShowLegalMoves] = useState(true);
 
   const [boardWidth, setBoardWidth] = useState<number>(480);
 
-  // Multiplayer UI
+  // Multiplayer-specific UI
   const [drawOfferReceived, setDrawOfferReceived] = useState(false);
   const [gameResult, setGameResult] = useState<string | null>(null);
   const [mpConnectionStatus, setMpConnectionStatus] = useState<
     "connecting" | "waiting" | "playing" | "disconnected"
   >("connecting");
 
-  // Game recorder for saving game data (solo only)
-  const gameRecorderRef = useRef<GameRecorder | null>(null);
-  const [isSavingGame, setIsSavingGame] = useState(false);
+  // FIX: clockStarted gate — clock only ticks after GAME_START is received
+  const [clockStarted, setClockStarted] = useState(false);
+  const clockStartedRef = useRef(false);
+  // FIX: gameStarted gate — prevents premature GAME_OVER processing
+  const gameStartedRef = useRef(false);
 
-  // Intro & voice init guards
-  const welcomePlayedRef = useRef(false);
-  const voiceInitializedRef = useRef(false);
-  const playingIntroRef = useRef(false);
+  const gameOverRef = useRef(false);
+  const isSoundOnRef = useRef(true);
+  const incrementRef = useRef(0);
+  const currentTurnRef = useRef<"w" | "b">("w");
 
   // Time warning flags
   const whiteTimeWarned30 = useRef(false);
@@ -108,21 +153,29 @@ const VoiceGamePage: React.FC<VoiceGamePageProps> = ({
   const blackTimeWarned30 = useRef(false);
   const blackTimeWarned10 = useRef(false);
 
-  const [clockStarted, setClockStarted] = useState(false);
-  const clockStartedRef = useRef(false);
-  const gameOverRef = useRef(false);
-  const isSoundOnRef = useRef(true);
-  const voicePausedRef = useRef(false);
-  const incrementRef = useRef(0);
-  const currentTurnRef = useRef<"w" | "b">("w");
+  // Game recorder for saving game data (solo only)
+  const gameRecorderRef = useRef<GameRecorder | null>(null);
+  const [isSavingGame, setIsSavingGame] = useState(false);
 
-  // Track last move for better feedback
-  const lastMoveRef = useRef<string>("");
+  const [, setCapturedPieces] = useState<{
+    white: string[];
+    black: string[];
+  }>({ white: [], black: [] });
+
+  const [boardOrientation, setBoardOrientation] = useState<"white" | "black">(myColor);
+
+  // ── Voice recognition state ────────────────────────────────────────────────
+  const [isListening, setIsListening] = useState(false);
+  const [voiceTranscript, setVoiceTranscript] = useState("");
+  const [voiceStatus, setVoiceStatus] = useState<"idle" | "listening" | "processing" | "error">("idle");
+  const [voiceError, setVoiceError] = useState<string | null>(null);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const recognitionRef = useRef<any>(null);
+  const voiceSupportedRef = useRef<boolean>(false);
 
   // ------- Basic sync effects -------
   useEffect(() => { gameOverRef.current = gameOver; }, [gameOver]);
   useEffect(() => { isSoundOnRef.current = isSoundOn; }, [isSoundOn]);
-  useEffect(() => { voicePausedRef.current = voicePaused; }, [voicePaused]);
   useEffect(() => { currentTurnRef.current = currentTurn; }, [currentTurn]);
   useEffect(() => { incrementRef.current = increment; }, [increment]);
 
@@ -144,6 +197,13 @@ const VoiceGamePage: React.FC<VoiceGamePageProps> = ({
     return () => window.removeEventListener("resize", handleResize);
   }, []);
 
+  // Check voice support
+  useEffect(() => {
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    voiceSupportedRef.current = !!SR;
+    if (!SR) setVoiceError("Speech recognition not supported in this browser.");
+  }, []);
+
   // Pick time control from route / session
   useEffect(() => {
     let tc: string | undefined = routeState?.timeControl as string | undefined;
@@ -156,11 +216,12 @@ const VoiceGamePage: React.FC<VoiceGamePageProps> = ({
         }
       } catch { /* ignore */ }
     }
-    setEffectiveTimeControl(tc || timeControl || "3+0");
+    setEffectiveTimeControl(tc || timeControl || "10+0");
   }, [routeState, timeControl]);
 
-  // Init time control
+  // FIX: Solo only — init clocks from time control. Multiplayer clocks are set in GAME_START.
   useEffect(() => {
+    if (isMultiplayer) return;
     const [mainPart, incStr] = effectiveTimeControl.split("+");
     let minutesPart = mainPart;
     if (minutesPart.includes("/")) minutesPart = minutesPart.split("/")[0];
@@ -177,7 +238,7 @@ const VoiceGamePage: React.FC<VoiceGamePageProps> = ({
     whiteTimeWarned10.current = false;
     blackTimeWarned30.current = false;
     blackTimeWarned10.current = false;
-  }, [effectiveTimeControl]);
+  }, [effectiveTimeControl, isMultiplayer]);
 
   // Initialize game recorder (solo only)
   useEffect(() => {
@@ -192,7 +253,6 @@ const VoiceGamePage: React.FC<VoiceGamePageProps> = ({
     const initStockfish = async () => {
       try {
         await stockfishService.initialize();
-        console.log("✅ Stockfish ready for voice game");
       } catch (error) {
         console.error("❌ Failed to initialize Stockfish:", error);
       }
@@ -211,31 +271,38 @@ const VoiceGamePage: React.FC<VoiceGamePageProps> = ({
       const token = await getAccessToken();
       if (!token || cancelled) return;
 
-      const wsUrl = `ws://localhost:8080/api/game/${mpState.gameId}?token=${token}&gameId=${mpState.gameId}`;
+      const wsUrl = `ws://localhost:8080/api/game/${mpState.gameId}?token=${token}`;
+      console.log("🔌 Connecting to game WS:", wsUrl);
       const ws = new WebSocket(wsUrl);
       wsRef.current = ws;
       setMpConnectionStatus("connecting");
 
       ws.onopen = () => {
-        console.log("🎮 Voice Game WS connected");
+        if (cancelled) return;
+        console.log("🎮 Game WS connected");
         setMpConnectionStatus("waiting");
+        setStatusMessage("Waiting for opponent...");
       };
 
       ws.onmessage = (event) => {
         if (cancelled) return;
         try {
-          handleServerMessage(JSON.parse(event.data));
+          const data = JSON.parse(event.data);
+          console.log("📨 Server message:", data.type, data);
+          handleServerMessage(data);
         } catch (e) {
           console.error("Failed to parse WS message:", e);
         }
       };
 
-      ws.onerror = () => {
-        setMpConnectionStatus("disconnected");
+      ws.onerror = (err) => {
+        console.error("❌ Game WS error:", err);
+        if (!cancelled) setMpConnectionStatus("disconnected");
       };
 
       ws.onclose = () => {
-        if (!gameOverRef.current) {
+        console.log("🔌 Game WS closed");
+        if (!cancelled && !gameOverRef.current) {
           setMpConnectionStatus("disconnected");
           setStatusMessage("Connection lost");
         }
@@ -248,147 +315,257 @@ const VoiceGamePage: React.FC<VoiceGamePageProps> = ({
       cancelled = true;
       if (wsRef.current) wsRef.current.close();
     };
-  }, [isMultiplayer, mpState?.gameId]);
+  }, [isMultiplayer, mpState?.gameId]); // eslint-disable-line
+
+  // FIX: Auto-resign when player leaves (clicks back, closes tab, or goes offline)
+  useEffect(() => {
+    if (!isMultiplayer || !gameStartedRef.current) return;
+
+    const handleBeforeUnload = () => {
+      // Send resignation message to opponent
+      if (wsRef.current?.readyState === WebSocket.OPEN) {
+        sendMessage({ type: "RESIGN" });
+      }
+    };
+
+    const handlePopState = () => {
+      // Handle back button
+      console.log("🔙 Back button pressed - auto resigning");
+      if (wsRef.current?.readyState === WebSocket.OPEN) {
+        sendMessage({ type: "RESIGN" });
+      }
+      gameOverRef.current = true;
+    };
+
+    window.addEventListener("beforeunload", handleBeforeUnload);
+    window.addEventListener("popstate", handlePopState);
+
+    return () => {
+      window.removeEventListener("beforeunload", handleBeforeUnload);
+      window.removeEventListener("popstate", handlePopState);
+    };
+  }, [isMultiplayer]);
+
+  // FIX: Timeout to detect if GAME_START isn't received (backend issue)
+  // FIX: Timeout to detect if GAME_START isn't received (backend issue)
+  useEffect(() => {
+    if (!isMultiplayer || gameStartedRef.current) return;
+    
+    const timeoutId = setTimeout(() => {
+      if (!gameStartedRef.current && mpConnectionStatus === "waiting") {
+        console.warn("⚠️ GAME_START not received after 30 seconds - possible backend issue");
+        setStatusMessage("⚠️ Game start delayed - checking server...");
+      }
+    }, 30000); // 30 second timeout
+
+    return () => clearTimeout(timeoutId);
+  }, [isMultiplayer, mpConnectionStatus]);
 
   // ── Handle incoming WebSocket messages ────────────────────────────────────
-  const handleServerMessage = useCallback((data: any) => {
-    switch (data.type) {
-      case "GAME_START": {
-        gameRef.current = new Chess();
-        setFen(gameRef.current.fen());
-        // Reset clock from server-confirmed timeControl so both clients are in sync
-        const tc = (data.timeControl as string) || "3+0";
-        const mins = Number(tc.split("+")[0]) || 0;
-        const totalSecs = mins * 60;
-        setWhiteTime(totalSecs);
-        setBlackTime(totalSecs);
-        clockStartedRef.current = true;
-        setClockStarted(true); // state change triggers clock effect even if currentTurn stays "w"
-        setCurrentTurn("w");
-        currentTurnRef.current = "w";
-        setMpConnectionStatus("playing");
-        const myTurn = myColorRef.current === "white";
-        setStatusMessage(myTurn ? "Your turn — make your move!" : "Opponent's turn");
-        speak(myTurn ? "Game started! You play as white. Make your move." : "Game started! You play as black. Wait for opponent.");
-        break;
-      }
+  const handleServerMessage = useCallback(
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (data: any) => {
+      switch (data.type) {
 
-      case "WAITING_FOR_OPPONENT": {
-        setMpConnectionStatus("waiting");
-        setStatusMessage("Waiting for opponent to connect...");
-        break;
-      }
+        case "WAITING_FOR_OPPONENT": {
+          console.log("⏳ Waiting for opponent...");
+          setMpConnectionStatus("waiting");
+          setStatusMessage("Waiting for opponent to connect...");
+          break;
+        }
 
-      case "MOVE": {
-        // Opponent's move — apply it
-        const game = gameRef.current;
-        try {
-          const move = game.move({
-            from: data.from,
-            to: data.to,
-            promotion: data.promotion || "q",
-          });
-          if (move) {
-            setFen(game.fen());
-            setMoveHistory((prev) => [...prev, move.san]);
-            lastMoveRef.current = move.san;
+        case "GAME_START": {
+          console.log("🚀 GAME_START received:", data);
 
-            const nextTurn = data.turn as "white" | "black";
-            const nextTurnChar = nextTurn === "white" ? "w" : "b";
-            setCurrentTurn(nextTurnChar);
-            currentTurnRef.current = nextTurnChar;
+          // FIX: Parse time control from GAME_START message (backend should provide this)
+          // Fallback to mpState.timeControl if not provided
+          let tc: string = (data.timeControl as string) || mpState?.timeControl || "10+0";
+          console.log("🕒 Time control from server:", tc);
+          
+          // Handle encoded time control (may come as "10%2B0" from URL)
+          tc = tc.replace("%2B", "+").replace("%2b", "+");
+          
+          const [mainPart, incStr] = tc.split("+");
+          let minutes = Number(mainPart) || 10;
+          let inc = Number(incStr) || 0;
+          
+          // Validation: ensure positive values
+          if (minutes <= 0) minutes = 10;
+          if (inc < 0) inc = 0;
+          
+          const totalSecs = Math.max(60, minutes * 60);
+          console.log("🕐 Parsed time - Minutes:", minutes, "Increment:", inc, "Total Seconds:", totalSecs);
 
-            // Apply increment
-            const movedColor = data.player as "white" | "black";
-            if (incrementRef.current > 0) {
-              if (movedColor === "white") setWhiteTime((p) => p + incrementRef.current);
-              else setBlackTime((p) => p + incrementRef.current);
+          // Reset board to starting position
+          gameRef.current = new Chess();
+          setFen(gameRef.current.fen());
+          setMoveHistory([]);
+          setGameHistory([]);
+          setLastMove(null);
+          setCapturedPieces({ white: [], black: [] });
+          setGameOver(false);
+          setGameResult(null);
+          gameOverRef.current = false;
+
+          // FIX: Set clocks from the server's time control
+          setWhiteTime(totalSecs);
+          setBlackTime(totalSecs);
+          setIncrement(inc);
+          incrementRef.current = inc;
+
+          // FIX: Reset time warnings
+          whiteTimeWarned30.current = false;
+          whiteTimeWarned10.current = false;
+          blackTimeWarned30.current = false;
+          blackTimeWarned10.current = false;
+
+          // FIX: Set myColor correctly from server data
+          const myColorFromServer = (data.myColor as "white" | "black") || mpState?.color || "white";
+          myColorRef.current = myColorFromServer;
+          console.log("🎨 My color:", myColorFromServer);
+
+          // FIX: Start the clock
+          clockStartedRef.current = true;
+          setClockStarted(true);
+          gameStartedRef.current = true;
+
+          setCurrentTurn("w");
+          currentTurnRef.current = "w";
+          setMpConnectionStatus("playing");
+
+          const myTurn = myColorRef.current === "white";
+          setStatusMessage(myTurn ? "Your turn — speak your move!" : "Opponent's turn");
+          break;
+        }
+
+        case "MOVE": {
+          const game = gameRef.current;
+          try {
+            const move = game.move({
+              from: data.from,
+              to: data.to,
+              promotion: data.promotion || "q",
+            });
+            if (move) {
+              setFen(game.fen());
+              setLastMove({ from: data.from, to: data.to });
+              setMoveHistory((prev) => [...prev, move.san]);
+
+              const historyItem: GameHistoryItem = {
+                id: Date.now(),
+                move: move.san,
+                timestamp: Date.now(),
+                player: move.color === "w" ? "white" : "black",
+              };
+              setGameHistory((prev) => [...prev, historyItem]);
+
+              if (move.captured) {
+                const sym = move.captured.toUpperCase();
+                setCapturedPieces((prev) => {
+                  const n = { ...prev };
+                  if (move.color === "w") n.black.push(sym);
+                  else n.white.push(sym);
+                  return n;
+                });
+              }
+
+              const nextTurn = data.turn as "white" | "black";
+              const nextTurnChar = nextTurn === "white" ? "w" : "b";
+              setCurrentTurn(nextTurnChar);
+              currentTurnRef.current = nextTurnChar;
+
+              const movedColor = data.player as "white" | "black";
+              if (incrementRef.current > 0) {
+                if (movedColor === "white")
+                  setWhiteTime((p) => p + incrementRef.current);
+                else setBlackTime((p) => p + incrementRef.current);
+              }
+
+              if (game.isCheckmate()) {
+                const iWin = movedColor === myColorRef.current;
+                setGameOver(true);
+                gameOverRef.current = true;
+                setGameResult(iWin ? "You win! by checkmate" : "You lose! by checkmate");
+                setStatusMessage("Checkmate!");
+              } else if (game.isDraw()) {
+                setGameOver(true);
+                gameOverRef.current = true;
+                setGameResult("Draw!");
+                setStatusMessage("Game drawn");
+              } else if (game.isCheck()) {
+                setStatusMessage("Check!");
+              } else {
+                const isMyTurn = nextTurn === myColorRef.current;
+                setStatusMessage(isMyTurn ? "Your turn — speak your move!" : "Opponent's turn");
+              }
             }
-
-            // Announce opponent's move via voice
-            speak(`Opponent plays ${move.san}`);
-
-            if (game.isCheckmate()) {
-              const winner = movedColor;
-              setGameOver(true);
-              gameOverRef.current = true;
-              const iWin = winner === myColorRef.current;
-              const msg = iWin ? "Checkmate! You win!" : "Checkmate! You lose!";
-              setGameResult(msg);
-              setStatusMessage("Checkmate!");
-              speak(msg);
-            } else if (game.isDraw()) {
-              setGameOver(true);
-              gameOverRef.current = true;
-              setGameResult("Draw!");
-              setStatusMessage("Game drawn");
-              speak("The game is drawn!");
-            } else if (game.isCheck()) {
-              setStatusMessage("Check! Your turn");
-              speak("Check! Make your move.");
-              // beep for your turn
-              beepService.playTurnBeep().catch(() => {});
-            } else if (nextTurn === myColorRef.current) {
-              setStatusMessage("Your turn");
-              beepService.playTurnBeep().catch(() => {});
-            } else {
-              setStatusMessage("Opponent's turn");
-            }
+          } catch (e) {
+            console.error("❌ Error applying opponent move:", e);
           }
-        } catch (e) {
-          console.error("❌ Error applying opponent move:", e);
+          break;
         }
-        break;
-      }
 
-      case "GAME_OVER": {
-        setGameOver(true);
-        gameOverRef.current = true;
-        if (data.result === "DRAW") {
-          const msg = `Draw by ${(data.reason || "").toLowerCase()}`;
-          setGameResult(msg);
-          setWinner(null);
-          speak("The game is a draw!");
-        } else {
-          const iWin =
-            (data.winner === "white" && myColorRef.current === "white") ||
-            (data.winner === "black" && myColorRef.current === "black");
-          const msg = iWin ? "You win!" : "You lose!";
-          setGameResult(msg);
-          setWinner(iWin ? "You" : "Opponent");
-          speak(iWin ? "Congratulations! You win!" : "Game over. You lose.");
+        case "GAME_OVER": {
+          // FIX: Ignore GAME_OVER if the game hasn't started yet (premature disconnect)
+          if (!gameStartedRef.current) {
+            console.warn("⚠️ Ignoring GAME_OVER — game hasn't started yet. Game data:", data);
+            break;
+          }
+
+          if (gameOverRef.current) {
+            console.warn("⚠️ GAME_OVER already processed, ignoring duplicate");
+            break;
+          }
+
+          setGameOver(true);
+          gameOverRef.current = true;
+
+          const winner = data.winner as string;
+          const reason = (data.reason as string) || "Game over";
+          console.log("🏁 Game over - Winner:", winner, "Reason:", reason);
+
+          if (winner === "draw" || data.result === "DRAW") {
+            setGameResult(`Draw — ${reason.toLowerCase()}`);
+            setWinner(null);
+          } else {
+            const iWin =
+              (winner === "white" && myColorRef.current === "white") ||
+              (winner === "black" && myColorRef.current === "black");
+            setGameResult(iWin ? "You win!" : "You lose!");
+            setWinner(iWin ? "You" : "Opponent");
+          }
+          setStatusMessage(reason);
+          break;
         }
-        setStatusMessage(data.reason || "Game over");
-        break;
-      }
 
-      case "DRAW_OFFER": {
-        setDrawOfferReceived(true);
-        setStatusMessage("Opponent offers a draw");
-        speak("Your opponent is offering a draw. Say accept draw or decline draw.");
-        break;
-      }
+        case "DRAW_OFFER": {
+          setDrawOfferReceived(true);
+          setStatusMessage("Opponent offers a draw");
+          break;
+        }
 
-      case "DRAW_DECLINED": {
-        setStatusMessage("Draw offer declined");
-        speak("Draw offer declined.");
-        setTimeout(
-          () => setStatusMessage(
-            currentTurnRef.current === (myColorRef.current === "white" ? "w" : "b")
-              ? "Your turn" : "Opponent's turn"
-          ), 2000
-        );
-        break;
-      }
+        case "DRAW_DECLINED": {
+          setStatusMessage("Draw offer declined");
+          setTimeout(
+            () =>
+              setStatusMessage(
+                currentTurnRef.current === (myColorRef.current === "white" ? "w" : "b")
+                  ? "Your turn — speak your move!" : "Opponent's turn"
+              ),
+            2000
+          );
+          break;
+        }
 
-      case "OPPONENT_DISCONNECTED": {
-        setStatusMessage("Opponent disconnected");
-        setMpConnectionStatus("disconnected");
-        speak("Your opponent has disconnected.");
-        break;
+        case "OPPONENT_DISCONNECTED": {
+          setStatusMessage("Opponent disconnected");
+          setMpConnectionStatus("disconnected");
+          break;
+        }
       }
-    }
-  }, []);
+    },
+    [mpState?.timeControl] // eslint-disable-line
+  );
 
   // ── WebSocket send helper ──────────────────────────────────────────────────
   const sendMessage = (msg: object) => {
@@ -397,72 +574,38 @@ const VoiceGamePage: React.FC<VoiceGamePageProps> = ({
     }
   };
 
-  // ---------- Helpers ----------
-  function stopVoiceListening() {
-    deepgramVoiceCommandService.stopListening();
-  }
-
-  function startVoiceListening() {
-    deepgramVoiceCommandService.startListening({
-      language: "en-IN",
-      onListeningStart: () => {
-        setIsListening(true);
-        beepService.playTurnBeep().catch(() => {});
-      },
-      onListeningStop: () => setIsListening(false),
-      onError: () => setIsListening(false),
-      onCommand: handleVoiceCommand,
-      onTranscript: (transcript, isFinal) => {
-        setLastCommand(transcript);
-        if (isFinal) setTimeout(() => setLastCommand(""), 2000);
-      },
-    });
-  }
-
-  async function speak(text: string) {
-    if (!text || !text.trim()) return;
+  // ---------- Sound Effects ----------
+  const playSound = (soundType: "move" | "capture" | "check" | "gameEnd") => {
     if (!isSoundOnRef.current) return;
     try {
-      let spokenText = text;
-      // Chess notation pronunciation enhancements
-      spokenText = spokenText.replace(/([NBRQK])([a-h][1-8])/g, (_, piece, square) => {
-        const names: Record<string, string> = { N: "Knight", B: "Bishop", R: "Rook", Q: "Queen", K: "King" };
-        return `${names[piece] || piece} to ${square[0].toUpperCase()} ${square[1]}`;
-      });
-      spokenText = spokenText.replace(/([NBRQK])x([a-h][1-8])/g, (_, piece, square) => {
-        const names: Record<string, string> = { N: "Knight", B: "Bishop", R: "Rook", Q: "Queen", K: "King" };
-        return `${names[piece] || piece} takes ${square[0].toUpperCase()} ${square[1]}`;
-      });
-      spokenText = spokenText.replace(/([a-h])x([a-h][1-8])/g, (_, fromFile, square) =>
-        `${fromFile} pawn takes ${square[0].toUpperCase()} ${square[1]}`
-      );
-      spokenText = spokenText.replace(/O-O-O/gi, "castles queenside");
-      spokenText = spokenText.replace(/O-O/gi, "castles kingside");
-      spokenText = spokenText.replace(/\s+/g, " ").trim();
-
-      if (deepgramVoiceCommandService.isActive()) deepgramVoiceCommandService.pauseListening();
-
-      await deepgramTTSService.speak({ text: spokenText, rate: 1.0, volume: 0.85 });
-
-      if (!voicePausedRef.current && !gameOverRef.current && voiceInitializedRef.current) {
-        deepgramVoiceCommandService.resumeListening();
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
+      const oscillator = audioContext.createOscillator();
+      const gainNode = audioContext.createGain();
+      oscillator.connect(gainNode);
+      gainNode.connect(audioContext.destination);
+      switch (soundType) {
+        case "move":    oscillator.frequency.value = 400; gainNode.gain.value = 0.1;  break;
+        case "capture": oscillator.frequency.value = 300; gainNode.gain.value = 0.15; break;
+        case "check":   oscillator.frequency.value = 600; gainNode.gain.value = 0.2;  break;
+        case "gameEnd": oscillator.frequency.value = 500; gainNode.gain.value = 0.15; break;
       }
+      oscillator.start();
+      oscillator.stop(audioContext.currentTime + 0.1);
     } catch (e) {
-      console.warn("TTS failed:", e);
+      console.warn("Sound playback failed:", e);
     }
-  }
+  };
 
-  function stopSpeech() { deepgramTTSService.stop(); }
-
+  // ---------- Flag / timeout ----------
   function handleFlag(flagged: "white" | "black") {
     if (gameOverRef.current) return;
     const winColor = flagged === "white" ? "Black" : "White";
-    const message = `Time is up! ${winColor} wins by timeout!`;
     setGameOver(true);
     gameOverRef.current = true;
     setWinner(winColor);
-    setStatusMessage(message);
-    speak(message);
+    setStatusMessage(`Time's up! ${winColor} wins on time!`);
+    playSound("gameEnd");
     if (isMultiplayer) sendMessage({ type: "FLAG", player: flagged });
   }
 
@@ -473,51 +616,66 @@ const VoiceGamePage: React.FC<VoiceGamePageProps> = ({
   };
 
   /**
-   * Apply a move — works for both solo and multiplayer
-   * source: "board" | "voice" = player's own move
-   *         "ai"              = solo AI response
+   * Apply move — handles both solo (AI game) and multiplayer
    */
   function applyMove(
     moveInput: string | { from: string; to: string; promotion?: string },
-    source: "board" | "voice" | "ai"
+    source: "board" | "ai" | "voice"
   ): boolean {
     if (gameOverRef.current) return false;
 
     const game = gameRef.current;
     let move: Move | null = null;
     try {
-      move = typeof moveInput === "string" ? game.move(moveInput) : game.move(moveInput);
+      move = typeof moveInput === "string"
+        ? game.move(moveInput)
+        : game.move(moveInput);
     } catch { move = null; }
 
     if (!move) {
-      if (source === "voice") {
-        const legalMoves = game.moves();
-        const moveList = legalMoves.slice(0, 5).join(", ");
-        speak(`That move is not legal. Try: ${moveList}`);
-        setStatusMessage("Illegal move - try again");
-      }
+      setStatusMessage("Illegal move — try again");
       return false;
     }
 
     setFen(game.fen());
     setMoveHistory((prev) => [...prev, move!.san]);
-    lastMoveRef.current = move.san;
+    setLastMove({ from: move.from, to: move.to });
 
-    // Solo: record in game recorder
+    const historyItem: GameHistoryItem = {
+      id: Date.now(),
+      move: move.san,
+      timestamp: Date.now(),
+      player: move.color === "w" ? "white" : "black",
+    };
+    setGameHistory((prev) => [...prev, historyItem]);
+
+    if (move.captured) {
+      const sym = move.captured.toUpperCase();
+      setCapturedPieces((prev) => {
+        const n = { ...prev };
+        if (move!.color === "w") n.black.push(sym);
+        else n.white.push(sym);
+        return n;
+      });
+    }
+
     if (!isMultiplayer && gameRecorderRef.current) {
       gameRecorderRef.current.recordMove(moveInput);
       if (move.color === "w") gameRecorderRef.current.updateTime("black", blackTime);
       else gameRecorderRef.current.updateTime("white", whiteTime);
     }
 
-    if (!clockStartedRef.current) { clockStartedRef.current = true; setClockStarted(true); }
+    if (!clockStartedRef.current) {
+      clockStartedRef.current = true;
+      setClockStarted(true);
+    }
 
     const sideToMove = game.turn();
 
-    // Apply increment to the side that just moved
-    if (incrementRef.current > 0) {
-      if (sideToMove === "b") setWhiteTime((prev) => prev + incrementRef.current);
-      else setBlackTime((prev) => prev + incrementRef.current);
+    // Apply increment
+    if (increment > 0) {
+      if (sideToMove === "b") setWhiteTime((prev) => prev + increment);
+      else setBlackTime((prev) => prev + increment);
     }
 
     // Multiplayer: send move over WebSocket
@@ -535,29 +693,21 @@ const VoiceGamePage: React.FC<VoiceGamePageProps> = ({
       });
     }
 
-    // Voice feedback for the move just made
-    if (source === "voice") {
-      speak(`You played ${move.san}`);
-    } else if (source === "ai") {
-      speak(`Computer plays ${move.san}`);
-    }
-
     // Game end checks
     if (game.isCheckmate()) {
       const winColor = sideToMove === "w" ? "Black" : "White";
-      const msg = `Checkmate! ${winColor} wins!`;
       setGameOver(true);
       gameOverRef.current = true;
       setWinner(winColor);
-      setStatusMessage(msg);
+      setStatusMessage(`Checkmate! ${winColor} wins!`);
       if (isMultiplayer) {
         const iWin = winColor.toLowerCase() === myColorRef.current;
         setGameResult(iWin ? "You win! by checkmate" : "You lose! by checkmate");
       }
-      speak(msg);
+      playSound("gameEnd");
     } else if (game.isDraw()) {
-      let msg = "The game is drawn";
-      if (game.isStalemate()) msg = "Stalemate! The game is drawn";
+      let msg = "Game drawn";
+      if (game.isStalemate()) msg = "Stalemate! Game drawn";
       else if (game.isThreefoldRepetition()) msg = "Draw by threefold repetition";
       else if (game.isInsufficientMaterial()) msg = "Draw by insufficient material";
       setGameOver(true);
@@ -565,15 +715,22 @@ const VoiceGamePage: React.FC<VoiceGamePageProps> = ({
       setWinner(null);
       setStatusMessage(msg);
       if (isMultiplayer) setGameResult("Draw!");
-      speak(msg);
+      playSound("gameEnd");
     } else if (game.isCheck()) {
-      setStatusMessage("Check!");
-      speak("Check!");
+      setStatusMessage(
+        isMultiplayer
+          ? sideToMove === (myColorRef.current === "white" ? "w" : "b")
+            ? "Check! Your turn — speak your move!"
+            : "Check! Opponent's turn"
+          : "Check!"
+      );
+      playSound("check");
     } else {
       if (isMultiplayer) {
         setStatusMessage(
           sideToMove === (myColorRef.current === "white" ? "w" : "b")
-            ? "Opponent's turn" : "Your turn"
+            ? "Opponent's turn"
+            : "Your turn — speak your move!"
         );
       } else {
         setStatusMessage(sideToMove === "w" ? "White to move" : "Black to move");
@@ -583,17 +740,50 @@ const VoiceGamePage: React.FC<VoiceGamePageProps> = ({
     setCurrentTurn(game.turn());
     currentTurnRef.current = game.turn();
 
-    // Solo: beep + AI response
-    if (!isMultiplayer) {
-      if (game.turn() === "w" && source === "ai") {
-        setTimeout(() => beepService.playTurnBeep().catch(() => {}), 1500);
-      }
-      if (game.turn() === "b" && source !== "ai" && !gameOverRef.current) {
-        setTimeout(() => makeAIMove(), 1000);
-      }
+    if (!isMultiplayer && game.turn() === "b" && source !== "ai" && !gameOverRef.current) {
+      setTimeout(() => makeAIMove(), 800);
     }
 
     return true;
+  }
+
+  // Solo: save completed game to database
+  async function saveGameToDB(result: "WIN" | "LOSS" | "DRAW", terminationReason: string) {
+    if (!gameRecorderRef.current) return;
+    setIsSavingGame(true);
+    try {
+      const recorder = gameRecorderRef.current;
+      const validation = recorder.validateMoves();
+      if (!validation.valid) {
+        setStatusMessage(`❌ Error: ${validation.message}`);
+        return;
+      }
+      const movesJson = recorder.getMovesAsJSON();
+      const pgn = recorder.generatePGN(
+        "You (White)", "ChessMaster AI", result,
+        effectiveTimeControl, "VOICE", terminationReason
+      );
+      const gameStats = recorder.getGameStats();
+      const accuracy = 75 + Math.floor(Math.random() * 20);
+      await gameService.saveGame({
+        opponentName: "ChessMaster AI",
+        result, pgn, movesJson,
+        whiteRating: 1847, blackRating: 1923,
+        timeControl: effectiveTimeControl,
+        gameType: "STANDARD" as const,
+        terminationReason,
+        moveCount: gameStats.moveCount,
+        totalTimeWhiteMs: gameStats.whiteTimeUsedMs,
+        totalTimeBlackMs: gameStats.blackTimeUsedMs,
+        accuracyPercentage: accuracy,
+      });
+      setStatusMessage("✅ Game saved! View in Past Games.");
+    } catch (error) {
+      console.error("❌ Failed to save game:", error);
+      setStatusMessage("⚠️ Game completed but failed to save");
+    } finally {
+      setIsSavingGame(false);
+    }
   }
 
   // Solo AI move
@@ -616,254 +806,226 @@ const VoiceGamePage: React.FC<VoiceGamePageProps> = ({
 
   function handleNewGame() {
     if (isMultiplayer) return;
-    stopSpeech();
     const newGame = new Chess();
     gameRef.current = newGame;
     setFen(newGame.fen());
     setMoveHistory([]);
-    setVoiceHistory([]);
+    setGameHistory([]);
     setStatusMessage("White to move");
     setCurrentTurn("w");
     currentTurnRef.current = "w";
     setGameOver(false);
     setWinner(null);
+    setGameResult(null);
     gameOverRef.current = false;
     clockStartedRef.current = false;
-    lastMoveRef.current = "";
+    setClockStarted(false);
+    setLastMove(null);
+    setCapturedPieces({ white: [], black: [] });
+    setVoiceTranscript("");
+    setVoiceStatus("idle");
+    const [mainPart] = effectiveTimeControl.split("+");
+    let minutesPart = mainPart;
+    if (minutesPart.includes("/")) minutesPart = minutesPart.split("/")[0];
+    const minutes = Number(minutesPart) || 0;
+    setWhiteTime(minutes * 60);
+    setBlackTime(minutes * 60);
     whiteTimeWarned30.current = false;
     whiteTimeWarned10.current = false;
     blackTimeWarned30.current = false;
     blackTimeWarned10.current = false;
-    speak("New game started. You play as white");
   }
 
-  // Solo: save game to DB
-  async function saveGameToDB(result: "WIN" | "LOSS" | "DRAW", terminationReason: string) {
-    if (!gameRecorderRef.current) return;
-    setIsSavingGame(true);
-    try {
-      const recorder = gameRecorderRef.current;
-      const validation = recorder.validateMoves();
-      if (!validation.valid) {
-        await speak(`Game completed but could not be saved. ${validation.message}`);
-        return;
-      }
-      const movesJson = recorder.getMovesAsJSON();
-      const pgn = recorder.generatePGN(
-        "You (White)", "ChessMaster AI", result,
-        effectiveTimeControl, "VOICE", terminationReason
-      );
-      const gameStats = recorder.getGameStats();
-      const accuracy = 75 + Math.floor(Math.random() * 20);
-      await gameService.saveGame({
-        opponentName: "ChessMaster AI",
-        result, pgn, movesJson,
-        whiteRating: 1847, blackRating: 1923,
-        timeControl: effectiveTimeControl,
-        gameType: "VOICE" as const,
-        terminationReason,
-        moveCount: gameStats.moveCount,
-        totalTimeWhiteMs: gameStats.whiteTimeUsedMs,
-        totalTimeBlackMs: gameStats.blackTimeUsedMs,
-        accuracyPercentage: accuracy,
-      });
-      await speak("Game saved to your database");
-    } catch (error) {
-      console.error("❌ Failed to save game:", error);
-      await speak("Game completed but failed to save");
-    } finally {
-      setIsSavingGame(false);
-    }
+  function handleUndo() {
+    if (gameOverRef.current || isMultiplayer) return;
+    if (moveHistory.length < 2) return;
+    const game = gameRef.current;
+    game.undo();
+    game.undo();
+    setFen(game.fen());
+    setMoveHistory((prev) => prev.slice(0, -2));
+    setGameHistory((prev) => prev.slice(0, -2));
+    setLastMove(null);
+    setStatusMessage("Move undone");
+    setCurrentTurn(game.turn());
+    currentTurnRef.current = game.turn();
   }
 
-  // ── Voice command handler ──────────────────────────────────────────────────
-  async function handleVoiceCommand(command: any) {
-    const text: string = command.originalText.toLowerCase();
-    setLastCommand(command.originalText);
-    console.log("🎯 Voice command:", command.intent, "| Text:", text);
-
-    let status: VoiceStatus = "Ignored";
-
-    // Universal controls
-    if (command.intent === "VOICE_STOP") {
-      stopSpeech();
-      beepService.playSuccessBeep().catch(() => {});
-      status = "Executed";
-    } else if (command.intent === "VOICE_REPEAT") {
-      await deepgramTTSService.replay();
-      beepService.playSuccessBeep().catch(() => {});
-      status = "Executed";
-    } else if (command.intent === "VOICE_ON") {
-      deepgramVoiceCommandService.setVoiceEnabled(true);
-      await speak("Voice commands enabled");
-      status = "Executed";
-    } else if (command.intent === "VOICE_OFF") {
-      deepgramVoiceCommandService.setVoiceEnabled(false);
-      await speak("Voice commands disabled");
-      status = "Executed";
-    }
-    // Board controls (solo only)
-    else if (!isMultiplayer && (text.includes("flip board") || text.includes("flip the board"))) {
-      setBoardOrientation((prev) => (prev === "white" ? "black" : "white"));
-      await speak("Board flipped");
-      status = "Executed";
-    } else if (!isMultiplayer && (text.includes("new game") || text.includes("restart game"))) {
-      handleNewGame();
-      status = "Executed";
-    }
-    // Info commands (work in both modes)
-    else if (text.includes("what move") || text.includes("last move") || text.includes("what did")) {
-      if (lastMoveRef.current) {
-        await speak(`The last move was ${lastMoveRef.current}`);
+  function handleOfferDraw() {
+    if (gameOverRef.current) return;
+    if (isMultiplayer) {
+      sendMessage({ type: "OFFER_DRAW" });
+      setStatusMessage("Draw offer sent...");
+    } else {
+      const accept = Math.random() > 0.5;
+      if (accept) {
+        setGameOver(true);
+        gameOverRef.current = true;
+        setWinner(null);
+        setStatusMessage("Draw agreed");
+        playSound("gameEnd");
       } else {
-        await speak("No moves have been played yet");
+        setStatusMessage("AI declined the draw offer");
+        setTimeout(() => setStatusMessage(currentTurn === "w" ? "White to move" : "Black to move"), 2000);
       }
-      beepService.playSuccessBeep().catch(() => {});
-      status = "Executed";
-    } else if (text.includes("legal move") || text.includes("what can i") || text.includes("possible move")) {
-      const legalMoves = gameRef.current.moves();
-      const moveList = legalMoves.slice(0, 6).join(", ");
-      const more = legalMoves.length > 6 ? `, and ${legalMoves.length - 6} more` : "";
-      await speak(`You can play: ${moveList}${more}`);
-      beepService.playSuccessBeep().catch(() => {});
-      status = "Executed";
     }
-    // Multiplayer-specific: draw and resign by voice
-    else if (isMultiplayer && (text.includes("offer draw") || text.includes("propose draw"))) {
-      if (!gameOverRef.current) {
-        sendMessage({ type: "OFFER_DRAW" });
-        setStatusMessage("Draw offer sent...");
-        await speak("Draw offer sent to opponent.");
-        status = "Executed";
-      }
-    } else if (isMultiplayer && (text.includes("accept draw") || text.includes("i accept"))) {
-      if (drawOfferReceived) {
-        sendMessage({ type: "ACCEPT_DRAW" });
-        setDrawOfferReceived(false);
-        await speak("Draw accepted.");
-        status = "Executed";
-      }
-    } else if (isMultiplayer && (text.includes("decline draw") || text.includes("reject draw"))) {
-      if (drawOfferReceived) {
-        sendMessage({ type: "DECLINE_DRAW" });
-        setDrawOfferReceived(false);
-        await speak("Draw declined.");
-        status = "Executed";
-      }
-    } else if (isMultiplayer && text.includes("resign")) {
-      if (!gameOverRef.current) {
+  }
+
+  function handleResign() {
+    if (gameOverRef.current) return;
+    if (isMultiplayer) {
+      if (confirm("Are you sure you want to resign?")) {
         sendMessage({ type: "RESIGN" });
-        await speak("You have resigned.");
-        status = "Executed";
       }
+    } else {
+      setGameOver(true);
+      gameOverRef.current = true;
+      setWinner("Black");
+      setStatusMessage("You resigned. Black wins!");
+      playSound("gameEnd");
     }
-    // Chess move parsing
-    else {
-      if (gameOverRef.current) {
-        await speak(isMultiplayer ? "The game is over." : "The game is over. Say new game to play again.");
-        status = "Ignored";
-      } else {
-        // Check it's the player's turn
-        const myTurn = isMultiplayer
-          ? gameRef.current.turn() === (myColorRef.current === "white" ? "w" : "b")
-          : gameRef.current.turn() === "w";
-
-        if (!myTurn) {
-          await speak(isMultiplayer ? "Please wait, it's your opponent's turn." : "Please wait, it's the computer's turn.");
-          status = "Error";
-        } else {
-          const san = GlobalVoiceParser.parseChessMove(text, gameRef.current);
-          console.log("🔍 Parsed move:", san);
-
-          if (san) {
-            const ok = applyMove(san, "voice");
-            if (ok) {
-              beepService.playSuccessBeep().catch(() => {});
-              status = "Executed";
-            } else {
-              const legalMoves = gameRef.current.moves();
-              await speak(`Invalid move. Try: ${legalMoves.slice(0, 5).join(", ")}`);
-              setStatusMessage("Illegal move");
-              status = "Error";
-            }
-          } else {
-            const legalMoves = gameRef.current.moves();
-            await speak(`I didn't understand that. Try: ${legalMoves.slice(0, 5).join(", ")}`);
-            status = "Error";
-          }
-        }
-      }
-    }
-
-    setVoiceHistory((prev) => {
-      const item: VoiceHistoryItem = { id: Date.now(), text: command.originalText, status, timestamp: Date.now() };
-      return [item, ...prev].slice(0, 10);
-    });
   }
 
-  // Board drag/drop
+  function handleAcceptDraw() {
+    sendMessage({ type: "ACCEPT_DRAW" });
+    setDrawOfferReceived(false);
+  }
+
+  function handleDeclineDraw() {
+    sendMessage({ type: "DECLINE_DRAW" });
+    setDrawOfferReceived(false);
+  }
+
   const onDrop = (sourceSquare: string, targetSquare: string) => {
     if (gameOverRef.current) return false;
     if (isMultiplayer) {
-      const myTurn = gameRef.current.turn() === (myColorRef.current === "white" ? "w" : "b");
-      if (!myTurn) return false;
+      if (!gameStartedRef.current) return false;
+      const myTurn = myColorRef.current === "white" ? "w" : "b";
+      if (gameRef.current.turn() !== myTurn) return false;
     } else {
       if (gameRef.current.turn() !== "w") return false;
     }
     return applyMove({ from: sourceSquare, to: targetSquare, promotion: "q" }, "board");
   };
 
+  const getSquareStyles = () => {
+    if (!showLegalMoves) return {};
+    const styles: { [square: string]: React.CSSProperties } = {};
+    if (lastMove) {
+      styles[lastMove.from] = { backgroundColor: "rgba(255, 255, 0, 0.4)" };
+      styles[lastMove.to]   = { backgroundColor: "rgba(255, 255, 0, 0.4)" };
+    }
+    return styles;
+  };
+
   const handleBack = () => {
+    if (isMultiplayer && gameStartedRef.current && !gameOverRef.current) {
+      // Auto-resign in multiplayer if game is still active
+      console.log("🔙 Going back - auto resigning");
+      if (wsRef.current?.readyState === WebSocket.OPEN) {
+        sendMessage({ type: "RESIGN" });
+      }
+      gameOverRef.current = true;
+    }
     if (window.history.length > 1) navigate(-1);
     else navigate("/home");
   };
 
-  // Intro (plays different text for multiplayer vs solo)
-  useEffect(() => {
-    const playIntro = async () => {
-      if (welcomePlayedRef.current || playingIntroRef.current) return;
-      playingIntroRef.current = true;
-      welcomePlayedRef.current = true;
+  // ── Voice recognition ──────────────────────────────────────────────────────
+  const startListening = useCallback(() => {
+    if (!voiceSupportedRef.current) {
+      setVoiceError("Speech recognition not supported.");
+      return;
+    }
+    if (gameOverRef.current) return;
+    if (isMultiplayer && !gameStartedRef.current) return;
 
-      try {
-        await deepgramVoiceCommandService.initialize();
-      } catch (e) {
-        console.warn("⚠️ Failed to initialize Deepgram:", e);
-      }
+    // Check whose turn
+    const myTurn = isMultiplayer
+      ? gameRef.current.turn() === (myColorRef.current === "white" ? "w" : "b")
+      : gameRef.current.turn() === "w";
+    if (!myTurn) {
+      setVoiceError("It's not your turn.");
+      setTimeout(() => setVoiceError(null), 2000);
+      return;
+    }
 
-      await new Promise((resolve) => setTimeout(resolve, 300));
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    const recognition = new SR();
+    recognitionRef.current = recognition;
 
-      if (isMultiplayer) {
-        const intro = `Voice Chess Multiplayer! You are playing as ${myColorRef.current}. Use voice commands to make your moves. Say the square name like E4, or piece like Knight to F3. Say legal moves for options.`;
-        try {
-          await speak(intro);
-        } catch (e) {
-          console.warn("Intro failed:", e);
-        }
-      } else {
-        try {
-          await speak("Welcome to Voice Chess! You are playing as white against the computer.");
-          await speak("To move, say the square like E4, or piece like Knight to F3. Say legal moves for options. Ready? Make your first move!");
-        } catch (e) {
-          console.warn("Intro failed:", e);
-        }
-      }
+    recognition.lang = "en-US";
+    recognition.interimResults = false;
+    recognition.maxAlternatives = 3;
+    recognition.continuous = false;
 
-      playingIntroRef.current = false;
+    recognition.onstart = () => {
+      setIsListening(true);
+      setVoiceStatus("listening");
+      setVoiceTranscript("");
+      setVoiceError(null);
     };
 
-    playIntro();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    recognition.onresult = (event: any) => {
+      setVoiceStatus("processing");
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const results = Array.from(event.results[0]) as any[];
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const transcripts = results.map((r: any) => r.transcript as string);
+      setVoiceTranscript(transcripts[0]);
+
+      let moved = false;
+      for (const t of transcripts) {
+        const parsed = parseVoiceMove(t, gameRef.current);
+        if (parsed) {
+          moved = applyMove(parsed, "voice");
+          if (moved) break;
+        }
+      }
+
+      if (!moved) {
+        setVoiceError(`Couldn't understand "${transcripts[0]}". Try again.`);
+        setTimeout(() => setVoiceError(null), 3000);
+      }
+      setVoiceStatus("idle");
+      setIsListening(false);
+    };
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    recognition.onerror = (event: any) => {
+      console.error("Voice recognition error:", event.error);
+      setVoiceError(`Mic error: ${event.error}`);
+      setVoiceStatus("error");
+      setIsListening(false);
+    };
+
+    recognition.onend = () => {
+      setIsListening(false);
+      if (voiceStatus === "listening") setVoiceStatus("idle");
+    };
+
+    recognition.start();
+  }, [isMultiplayer]); // eslint-disable-line
+
+  const stopListening = useCallback(() => {
+    if (recognitionRef.current) {
+      recognitionRef.current.stop();
+      recognitionRef.current = null;
+    }
+    setIsListening(false);
+    setVoiceStatus("idle");
   }, []);
 
-  // Clock ticker
+  // Clock ticker — only runs when clockStarted is true
   useEffect(() => {
     if (gameOver || isPaused || !clockStarted) return;
     let timerId: number;
     if (currentTurn === "w") {
       timerId = window.setInterval(() => {
         setWhiteTime((prev) => {
-          if (prev === 30 && !whiteTimeWarned30.current) { whiteTimeWarned30.current = true; speak("You have 30 seconds left"); }
-          if (prev === 10 && !whiteTimeWarned10.current) { whiteTimeWarned10.current = true; speak("10 seconds remaining!"); }
+          if (prev === 30 && !whiteTimeWarned30.current) whiteTimeWarned30.current = true;
+          if (prev === 10 && !whiteTimeWarned10.current) whiteTimeWarned10.current = true;
           if (prev <= 1) { handleFlag("white"); return 0; }
           return prev - 1;
         });
@@ -871,22 +1033,18 @@ const VoiceGamePage: React.FC<VoiceGamePageProps> = ({
     } else {
       timerId = window.setInterval(() => {
         setBlackTime((prev) => {
-          if (!isMultiplayer) {
-            if (prev === 30 && !blackTimeWarned30.current) { blackTimeWarned30.current = true; speak("Computer has 30 seconds left"); }
-            if (prev === 10 && !blackTimeWarned10.current) { blackTimeWarned10.current = true; speak("Computer has 10 seconds!"); }
-          } else {
-            if (prev === 30 && !blackTimeWarned30.current) { blackTimeWarned30.current = true; speak("Opponent has 30 seconds left"); }
-            if (prev === 10 && !blackTimeWarned10.current) { blackTimeWarned10.current = true; speak("Opponent has 10 seconds!"); }
-          }
+          if (prev === 30 && !blackTimeWarned30.current) blackTimeWarned30.current = true;
+          if (prev === 10 && !blackTimeWarned10.current) blackTimeWarned10.current = true;
           if (prev <= 1) { handleFlag("black"); return 0; }
           return prev - 1;
         });
       }, 1000);
     }
     return () => window.clearInterval(timerId);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentTurn, gameOver, isPaused, clockStarted]);
 
-  // Multiplayer: periodic time updates
+  // Multiplayer: send periodic time updates
   useEffect(() => {
     if (!isMultiplayer || !clockStartedRef.current || gameOver) return;
     const timer = window.setInterval(() => {
@@ -903,153 +1061,213 @@ const VoiceGamePage: React.FC<VoiceGamePageProps> = ({
       let terminationReason = "DRAW";
       if (winner === "White") { result = "WIN"; terminationReason = "CHECKMATE"; }
       else if (winner === "Black") { result = "LOSS"; terminationReason = "CHECKMATE"; }
+      else if (statusMessage.includes("Stalemate")) terminationReason = "STALEMATE";
+      else if (statusMessage.includes("threefold")) terminationReason = "THREEFOLD_REPETITION";
+      else if (statusMessage.includes("insufficient")) terminationReason = "INSUFFICIENT_MATERIAL";
       await saveGameToDB(result, terminationReason);
     };
     const timer = setTimeout(saveGame, 500);
     return () => clearTimeout(timer);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [gameOver]);
 
-  // Voice recognition starts after intro
-  useEffect(() => {
-    const initVoice = async () => {
-      if (voiceInitializedRef.current) return;
-      await new Promise((resolve) => setTimeout(resolve, isMultiplayer ? 4000 : 6000));
-      voiceInitializedRef.current = true;
-      startVoiceListening();
-    };
-    initVoice();
-    return () => {
-      stopSpeech();
-      stopVoiceListening();
-    };
-  }, []);
+  // ── FIX: Derived display values ────────────────────────────────────────────
+  // Use the pre-calculated opponent name from MatchmakingPage
+  const opponentDisplayName = isMultiplayer
+    ? mpState?.opponentName || "Opponent"
+    : "ChessMaster AI";
+  const opponentColor = myColor === "white" ? "black" : "white";
 
-  // ── Derived display values ─────────────────────────────────────────────────
-  const opponentName = mpState?.opponentName || "Opponent";
-  const opponentPlayer = myColor === "white" ? mpState?.blackPlayer : mpState?.whitePlayer;
   const opponentClock = myColor === "white" ? blackTime : whiteTime;
-  const myClock = myColor === "white" ? whiteTime : blackTime;
+  const myClock       = myColor === "white" ? whiteTime : blackTime;
 
+  const isMyTurn = isMultiplayer
+    ? gameStartedRef.current && gameRef.current.turn() === (myColor === "white" ? "w" : "b")
+    : gameRef.current.turn() === "w";
+
+  const isDraggable = isMultiplayer
+    ? !gameOver && gameStartedRef.current &&
+      gameRef.current.turn() === (myColor === "white" ? "w" : "b") && !isPaused
+    : !gameOver && gameRef.current.turn() === "w" && !isPaused;
+
+  // ── Render ─────────────────────────────────────────────────────────────────
   return (
     <>
-      <Navbar rating={isMultiplayer ? 0 : 1847} streak={isMultiplayer ? 0 : 5} />
+      <Navbar rating={1847} streak={5} />
 
-      <div className="voice-game-page">
-        <div className="voice-back-row">
-          <button className="voice-back-btn" onClick={handleBack}>
+      <div className="voice-chess-page">
+        <div className="chess-back-row">
+          <button className="chess-back-btn" onClick={handleBack}>
             ← Back to Menu
           </button>
           {isMultiplayer && (
-            <span style={{
-              background: mpConnectionStatus === "playing" ? "rgba(0,200,100,0.2)"
-                : mpConnectionStatus === "waiting" ? "rgba(255,200,0,0.2)"
-                : "rgba(255,80,80,0.2)",
-              color: mpConnectionStatus === "playing" ? "#00c864"
-                : mpConnectionStatus === "waiting" ? "#ffc800"
-                : "#ff5050",
-              border: "1px solid currentColor",
-              padding: "4px 14px", borderRadius: "20px",
-              fontSize: "0.8rem", fontWeight: 600,
-            }}>
-              {mpConnectionStatus === "playing" ? "● Live"
-                : mpConnectionStatus === "waiting" ? "⏳ Waiting"
-                : mpConnectionStatus === "connecting" ? "⟳ Connecting"
-                : "✕ Disconnected"}
-            </span>
+            <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
+              <span
+                className="chess-top-badge"
+                style={{
+                  background:
+                    mpConnectionStatus === "playing"
+                      ? "rgba(0,200,100,0.2)"
+                      : mpConnectionStatus === "waiting"
+                      ? "rgba(255,200,0,0.2)"
+                      : "rgba(255,80,80,0.2)",
+                  color:
+                    mpConnectionStatus === "playing"
+                      ? "#00c864"
+                      : mpConnectionStatus === "waiting"
+                      ? "#ffc800"
+                      : "#ff5050",
+                  border: `1px solid currentColor`,
+                  padding: "4px 12px",
+                  borderRadius: "20px",
+                  fontSize: "0.8rem",
+                  fontWeight: 600,
+                }}
+              >
+                {mpConnectionStatus === "playing"
+                  ? "● Live"
+                  : mpConnectionStatus === "waiting"
+                  ? "⏳ Waiting for opponent"
+                  : mpConnectionStatus === "connecting"
+                  ? "⟳ Connecting"
+                  : "✕ Disconnected"}
+              </span>
+              <span style={{ color: "#888", fontSize: "0.85rem" }}>
+                ⏱ {mpState?.timeControl || effectiveTimeControl}
+              </span>
+            </div>
           )}
         </div>
 
-        <div className="voice-top-bar">
-          <div className="voice-top-left">
-            <div className="voice-top-title-row">
-              <span className={`voice-dot ${isListening ? "listening" : ""}`} />
-              <span className="voice-top-title">
-                {isMultiplayer ? "Voice Chess Multiplayer" : "Voice Chess Active"}
+        <div className="chess-top-bar">
+          <div className="chess-top-left">
+            <div className="chess-top-title-row">
+              <span className="chess-dot" />
+              <span className="chess-top-title">
+                {isMultiplayer ? "Multiplayer Voice Chess" : "Voice Chess Game"}
               </span>
-              <span className="voice-top-badge">
-                {isMultiplayer ? `VS ${opponentPlayer || opponentName}` : "AI Opponent"}
+              <span className="chess-top-badge">
+                {isMultiplayer ? "VS Player" : "VS AI"}
+              </span>
+              <span className="chess-top-badge" style={{ background: "rgba(100,100,255,0.2)", color: "#aaf" }}>
+                🎤 Voice Mode
               </span>
             </div>
-            <div className="voice-top-subtitle">
-              {isMultiplayer
-                ? <>You are <strong style={{ color: myColor === "white" ? "#fff" : "#aaa" }}>{myColor}</strong> — Say move like: <span className="voice-top-subtitle-strong">"E4"</span> or <span className="voice-top-subtitle-strong">"Knight to F3"</span></>
-                : <>Say commands like: <span className="voice-top-subtitle-strong">"Knight to F3"</span> or <span className="voice-top-subtitle-strong">"E4"</span></>
-              }
+            <div className="chess-top-subtitle">
+              {isMultiplayer ? (
+                <>
+                  You are playing as{" "}
+                  <strong style={{ color: myColor === "white" ? "#fff" : "#aaa" }}>
+                    {myColor}
+                  </strong>{" "}
+                  — {statusMessage}
+                </>
+              ) : (
+                <>
+                  Time Control:{" "}
+                  <span className="chess-top-subtitle-strong">{effectiveTimeControl}</span>{" "}
+                  | Speak moves like "e2 e4" or drag pieces
+                </>
+              )}
             </div>
           </div>
-          <div className="voice-top-right">
-            <div className="voice-progress-bar">
-              <div className="voice-progress-fill" style={{ width: isListening ? "75%" : "0%" }} />
-            </div>
-            <button className="voice-top-button" onClick={() => {
-              const next = !voicePaused;
-              setVoicePaused(next);
-              if (next) stopVoiceListening();
-              else startVoiceListening();
-            }}>
-              {voicePaused ? "▶ Resume Voice" : "⏸ Pause Voice"}
-            </button>
+          <div className="chess-top-right">
+            {!isMultiplayer && (
+              <>
+                <button
+                  className="chess-top-button"
+                  onClick={() => setIsPaused((p) => !p)}
+                  disabled={gameOver}
+                >
+                  {isPaused ? "▶ Resume Game" : "⏸ Pause Game"}
+                </button>
+                <button
+                  className="chess-top-button secondary"
+                  onClick={handleNewGame}
+                >
+                  🔄 New Game
+                </button>
+              </>
+            )}
           </div>
         </div>
 
-        <div className="voice-main-layout">
-          {/* LEFT */}
-          <div className="voice-left-column">
-            {/* Opponent card above board (multiplayer) */}
+        <div className="chess-main-layout">
+          {/* LEFT COLUMN - BOARD */}
+          <div className="chess-left-column">
+
+            {/* Opponent player card */}
             {isMultiplayer && (
-              <div className={`voice-player-card ${opponentClock <= 30 ? "low-time" : ""}`}
-                style={{ marginBottom: "8px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <div
+                className={`chess-player-card ${opponentClock <= 30 && clockStarted ? "low-time" : ""}`}
+                style={{ marginBottom: "8px" }}
+              >
                 <div className="player-left">
                   <div className="player-avatar ai">
-                    {(opponentPlayer || opponentName)[0]?.toUpperCase()}
+                    {opponentDisplayName[0]?.toUpperCase() || "?"}
                   </div>
                   <div>
-                    <div className="player-name">{opponentPlayer || opponentName}</div>
+                    <div className="player-name">{opponentDisplayName}</div>
                     <div className="player-rating">
-                      {myColor === "white" ? "⬛ Black" : "⬜ White"}
+                      {opponentColor === "black" ? "⬛ Black" : "⬜ White"}
                     </div>
                   </div>
                 </div>
-                <div className={`player-clock ${opponentClock <= 30 ? "low-time" : ""} ${opponentClock <= 10 ? "critical-time" : ""}`}>
+                <div
+                  className={`player-clock ${opponentClock <= 30 && clockStarted ? "low-time" : ""} ${opponentClock <= 10 && clockStarted ? "critical-time" : ""}`}
+                  style={{ color: !clockStarted ? "#666" : undefined }}
+                >
                   {formatTime(opponentClock)}
                 </div>
               </div>
             )}
 
-            <div className="voice-board-card">
+            <div className="chess-board-card">
               <Chessboard
-                {...({
-                  position: fen,
-                  onPieceDrop: onDrop,
-                  boardOrientation: isMultiplayer ? myColor : boardOrientation,
-                  boardWidth,
-                  arePiecesDraggable: isMultiplayer
-                    ? !gameOver && gameRef.current.turn() === (myColor === "white" ? "w" : "b")
-                    : !gameOver && gameRef.current.turn() === "w",
-                  customBoardStyle: {
-                    borderRadius: "16px",
-                    boxShadow: "0 20px 60px rgba(0,0,0,0.9)",
-                    marginLeft: window.innerWidth > 768 ? "150px" : "0",
-                  },
-                } as any)}
+                position={fen}
+                onPieceDrop={onDrop}
+                boardOrientation={isMultiplayer ? myColor : boardOrientation}
+                boardWidth={boardWidth}
+                arePiecesDraggable={isDraggable}
+                customSquareStyles={getSquareStyles()}
+                customBoardStyle={{
+                  borderRadius: "16px",
+                  boxShadow: "0 20px 60px rgba(0,0,0,0.9)",
+                }}
               />
-              <div className="voice-board-footer">
+
+              <div className="chess-board-footer">
                 {!isMultiplayer && (
-                  <button className="voice-small-btn" onClick={() =>
-                    setBoardOrientation((prev) => prev === "white" ? "black" : "white")}>
+                  <button
+                    className="chess-small-btn"
+                    onClick={() =>
+                      setBoardOrientation((p) => p === "white" ? "black" : "white")
+                    }
+                  >
                     🔄 Flip Board
                   </button>
                 )}
-                <button className="voice-small-btn" onClick={() => setIsSoundOn((prev) => !prev)}>
+                <button
+                  className="chess-small-btn"
+                  onClick={() => setShowLegalMoves((p) => !p)}
+                >
+                  {showLegalMoves ? "👁 Hide Hints" : "👁 Show Hints"}
+                </button>
+                <button
+                  className="chess-small-btn"
+                  onClick={() => setIsSoundOn((p) => !p)}
+                >
                   {isSoundOn ? "🔊 Sound On" : "🔇 Sound Off"}
                 </button>
               </div>
             </div>
 
-            {/* My card below board (multiplayer) */}
+            {/* My player card */}
             {isMultiplayer && (
-              <div className={`voice-player-card you-card ${myClock <= 30 ? "low-time" : ""}`}
-                style={{ marginTop: "8px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <div
+                className={`chess-player-card you-card ${myClock <= 30 && clockStarted ? "low-time" : ""}`}
+                style={{ marginTop: "8px" }}
+              >
                 <div className="player-left">
                   <div className="player-avatar you">Y</div>
                   <div>
@@ -1059,178 +1277,185 @@ const VoiceGamePage: React.FC<VoiceGamePageProps> = ({
                     </div>
                   </div>
                 </div>
-                <div className={`player-clock ${myClock <= 30 ? "low-time" : ""} ${myClock <= 10 ? "critical-time" : ""}`}>
+                <div
+                  className={`player-clock ${myClock <= 30 && clockStarted ? "low-time" : ""} ${myClock <= 10 && clockStarted ? "critical-time" : ""}`}
+                  style={{ color: !clockStarted ? "#666" : undefined }}
+                >
                   {formatTime(myClock)}
                 </div>
               </div>
             )}
 
-            {/* Multiplayer controls */}
-            {isMultiplayer && (
-              <div className="voice-board-footer" style={{ marginTop: "8px" }}>
-                <button className="voice-small-btn" onClick={() => {
-                  if (!gameOverRef.current) { sendMessage({ type: "OFFER_DRAW" }); speak("Draw offer sent."); }
-                }} disabled={gameOver}>🤝 Offer Draw</button>
-                <button className="voice-small-btn" onClick={() => {
-                  if (!gameOverRef.current) { sendMessage({ type: "RESIGN" }); speak("You have resigned."); }
-                }} disabled={gameOver} style={{ color: "#ff6b6b" }}>🏳️ Resign</button>
+            {/* Game Controls */}
+            <div className="chess-controls-panel">
+              {!isMultiplayer && (
+                <button
+                  className="chess-control-btn"
+                  onClick={handleUndo}
+                  disabled={gameOver || moveHistory.length < 2}
+                >
+                  ↩️ Undo Move
+                </button>
+              )}
+              <button
+                className="chess-control-btn"
+                onClick={handleOfferDraw}
+                disabled={gameOver || (isMultiplayer && !gameStartedRef.current)}
+              >
+                🤝 Offer Draw
+              </button>
+              <button
+                className="chess-control-btn danger"
+                onClick={handleResign}
+                disabled={gameOver || (isMultiplayer && !gameStartedRef.current)}
+              >
+                🏳️ Resign
+              </button>
+            </div>
+
+            {/* Draw offer banner */}
+            {drawOfferReceived && (
+              <div className="draw-offer-banner">
+                <span>🤝 Opponent offers a draw</span>
+                <button className="accept-draw-btn" onClick={handleAcceptDraw}>Accept</button>
+                <button className="decline-draw-btn" onClick={handleDeclineDraw}>Decline</button>
               </div>
             )}
-
-            <div className="voice-command-banner">
-              <div className="voice-command-left">
-                <span className={`voice-command-icon ${isListening ? "active" : ""}`}>
-                  {isListening ? "🎤" : "⏸"}
-                </span>
-                <div>
-                  <div className="voice-command-label">
-                    {isListening ? "Listening for Command" : "Voice Paused"}
-                  </div>
-                  <div className="voice-command-text">
-                    {lastCommand ? `"${lastCommand}"` : "Waiting for your voice command..."}
-                  </div>
-                </div>
-              </div>
-              <div className={`voice-command-status-pill ${gameOver ? "game-over" : isListening ? "active" : ""}`}>
-                {gameOver ? "⏹ Game Over" : isListening ? "● Recording" : "⏸ Idle"}
-              </div>
-            </div>
           </div>
 
-          {/* RIGHT */}
-          <div className="voice-right-column">
-            {/* Multiplayer draw offer banner */}
-            {isMultiplayer && drawOfferReceived && (
-              <div style={{
-                background: "rgba(255,215,0,0.1)", border: "1px solid rgba(255,215,0,0.4)",
-                borderRadius: "12px", padding: "16px", marginBottom: "12px", textAlign: "center",
-              }}>
-                <p style={{ color: "#ffd700", marginBottom: "10px", fontWeight: 600 }}>
-                  🤝 Opponent offers a draw
-                </p>
-                <div style={{ display: "flex", gap: "8px", justifyContent: "center" }}>
-                  <button onClick={() => { sendMessage({ type: "ACCEPT_DRAW" }); setDrawOfferReceived(false); }} style={{
-                    background: "rgba(0,200,100,0.2)", border: "1px solid #00c864",
-                    color: "#00c864", padding: "8px 16px", borderRadius: "8px", cursor: "pointer",
-                  }}>✓ Accept</button>
-                  <button onClick={() => { sendMessage({ type: "DECLINE_DRAW" }); setDrawOfferReceived(false); }} style={{
-                    background: "rgba(255,80,80,0.2)", border: "1px solid #ff5050",
-                    color: "#ff5050", padding: "8px 16px", borderRadius: "8px", cursor: "pointer",
-                  }}>✗ Decline</button>
-                </div>
-                <p style={{ color: "#888", fontSize: "0.8rem", marginTop: "8px" }}>Or say "accept draw" / "decline draw"</p>
-              </div>
-            )}
+          {/* RIGHT COLUMN */}
+          <div className="chess-right-column">
 
-            {/* Game over banner (multiplayer) */}
-            {isMultiplayer && gameOver && gameResult && (
-              <div style={{
-                background: "rgba(255,215,0,0.08)", border: "1px solid rgba(255,215,0,0.3)",
-                borderRadius: "16px", padding: "24px", marginBottom: "12px", textAlign: "center",
-              }}>
-                <div style={{ fontSize: "2.5rem", marginBottom: "8px" }}>
-                  {gameResult.includes("win") ? "🏆" : "🤝"}
-                </div>
-                <div style={{ color: "#ffd700", fontSize: "1.2rem", fontWeight: 700, marginBottom: "16px" }}>
-                  {gameResult}
-                </div>
-                <button onClick={() => navigate("/home")} style={{
-                  background: "rgba(255,215,0,0.15)", border: "1px solid rgba(255,215,0,0.4)",
-                  color: "#ffd700", padding: "10px 24px", borderRadius: "8px",
-                  cursor: "pointer", fontSize: "0.95rem", fontWeight: 600,
-                }}>Back to Home</button>
+            {/* VOICE CONTROL PANEL */}
+            <div className="voice-panel">
+              <div className="voice-panel-header">
+                <span className="voice-panel-title">🎤 Voice Controls</span>
+                {!voiceSupportedRef.current && (
+                  <span className="voice-not-supported">Not supported</span>
+                )}
               </div>
-            )}
 
-            {/* Solo player cards */}
+              <button
+                className={`voice-main-btn ${isListening ? "listening" : ""} ${!voiceSupportedRef.current || gameOver ? "disabled" : ""}`}
+                onClick={isListening ? stopListening : startListening}
+                disabled={!voiceSupportedRef.current || gameOver || (isMultiplayer && !isMyTurn)}
+              >
+                {isListening ? (
+                  <>
+                    <span className="voice-pulse" /> Stop Listening
+                  </>
+                ) : voiceStatus === "processing" ? (
+                  "⏳ Processing..."
+                ) : (
+                  <>
+                    🎤 {isMyTurn ? "Speak Move" : "Not Your Turn"}
+                  </>
+                )}
+              </button>
+
+              {voiceTranscript && (
+                <div className="voice-transcript">
+                  <span className="voice-transcript-label">Heard:</span>
+                  <span className="voice-transcript-text">"{voiceTranscript}"</span>
+                </div>
+              )}
+
+              {voiceError && (
+                <div className="voice-error">{voiceError}</div>
+              )}
+
+              <div className="voice-help">
+                <div className="voice-help-title">How to speak moves:</div>
+                <div className="voice-help-item">• "e2 e4" or "e two e four"</div>
+                <div className="voice-help-item">• "Nf3" (standard chess notation)</div>
+                <div className="voice-help-item">• "g1 f3" (square to square)</div>
+              </div>
+            </div>
+
+            {/* Clocks panel for solo mode */}
             {!isMultiplayer && (
-              <>
-                <div className="voice-player-card ai-card">
-                  <div className="player-left">
-                    <div className="player-avatar ai">🤖</div>
-                    <div>
-                      <div className="player-name">ChessMaster AI</div>
-                      <div className="player-rating">⭐ Rating: 1923</div>
-                    </div>
-                  </div>
-                  <div className={`player-clock ${blackTime <= 30 ? "low-time" : ""} ${blackTime <= 10 ? "critical-time" : ""}`}>
-                    {formatTime(blackTime)}
-                  </div>
+              <div className="chess-clocks-panel">
+                <div
+                  className={`clock-item ${currentTurn === "b" && clockStarted ? "active-clock" : ""} ${blackTime <= 30 && clockStarted ? "low-time" : ""}`}
+                >
+                  <span className="clock-label">⬛ Black</span>
+                  <span className="clock-value">{formatTime(blackTime)}</span>
                 </div>
-                <div className="voice-player-card you-card">
-                  <div className="player-left">
-                    <div className="player-avatar you">Y</div>
-                    <div>
-                      <div className="player-name">You (Voice Player)</div>
-                      <div className="player-rating">⭐ Rating: 1847</div>
-                    </div>
-                  </div>
-                  <div className={`player-clock ${whiteTime <= 30 ? "low-time" : ""} ${whiteTime <= 10 ? "critical-time" : ""}`}>
-                    {formatTime(whiteTime)}
-                  </div>
+                <div className="clock-divider" />
+                <div
+                  className={`clock-item ${currentTurn === "w" && clockStarted ? "active-clock" : ""} ${whiteTime <= 30 && clockStarted ? "low-time" : ""}`}
+                >
+                  <span className="clock-label">⬜ White</span>
+                  <span className="clock-value">{formatTime(whiteTime)}</span>
                 </div>
-              </>
+              </div>
             )}
 
-            <div className="voice-history-card">
-              <div className="panel-header">
-                <span>📝 Voice Command History</span>
-                <span className="live-pill">● LIVE</span>
+            {/* Game Over result panel */}
+            {gameOver && (
+              <div className="chess-result-card">
+                <div className="result-emoji">
+                  {(isMultiplayer ? gameResult : winner ? "🏆" : "🤝") || "🏁"}
+                </div>
+                <div className="result-title">
+                  {isMultiplayer
+                    ? gameResult || "Game Over"
+                    : winner
+                    ? `🏆 ${winner} wins!`
+                    : "🤝 Game drawn"}
+                </div>
+                <button
+                  className="result-home-btn"
+                  onClick={() => navigate("/home")}
+                >
+                  Back to Home
+                </button>
               </div>
-              <div className="voice-history-list">
-                {voiceHistory.length === 0 && (
-                  <div className="voice-history-empty">Your voice commands will appear here.</div>
-                )}
-                {voiceHistory.map((item) => (
-                  <div key={item.id} className="voice-history-item">
-                    <div className="voice-history-text">"{item.text}"</div>
-                    <div className="voice-history-meta">
-                      <span className="voice-history-time">Just now</span>
-                      <span className={`voice-history-status status-${item.status.toLowerCase()}`}>
-                        {item.status}
-                      </span>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
+            )}
 
-            <div className="voice-tips-card">
-              <div className="panel-header">
-                <span>💡 Voice Command Examples</span>
-              </div>
-              <ul className="voice-tips-list">
-                <li><strong>Simple:</strong> <span className="highlight">"E 4"</span>, <span className="highlight">"D 4"</span></li>
-                <li><strong>Piece moves:</strong> <span className="highlight">"Knight to F 3"</span>, <span className="highlight">"Bishop to C 4"</span></li>
-                <li><strong>Captures:</strong> <span className="highlight">"Knight takes E 5"</span></li>
-                <li><strong>Special:</strong> <span className="highlight">"Castle kingside"</span>, <span className="highlight">"Legal moves"</span></li>
-                {isMultiplayer && (
-                  <li><strong>Multiplayer:</strong> <span className="highlight">"Offer draw"</span>, <span className="highlight">"Accept draw"</span>, <span className="highlight">"Resign"</span></li>
-                )}
-              </ul>
-            </div>
-
-            <div className="voice-move-history-card">
-              <div className="panel-header">
-                <span>♟️ Move History</span>
+            {/* Move History */}
+            <div className="chess-history-panel">
+              <div className="chess-history-header">
+                <span>♟ Move History</span>
+                <span className="chess-history-count">
+                  {Math.ceil(moveHistory.length / 2)} moves
+                </span>
               </div>
               <div className="move-history-list">
                 {moveHistory.length === 0 && (
-                  <div className="voice-history-empty">Game moves will be recorded here.</div>
-                )}
-                {Array.from({ length: Math.ceil(moveHistory.length / 2) }, (_, i) => (
-                  <div key={i} className="move-history-item">
-                    <span className="move-index">{i + 1}.</span>
-                    <span className="move-text">{moveHistory[i * 2]}</span>
-                    {moveHistory[i * 2 + 1] && (
-                      <span className="move-text" style={{ marginLeft: "8px" }}>{moveHistory[i * 2 + 1]}</span>
-                    )}
+                  <div className="chess-history-empty">
+                    Game moves will be recorded here.
                   </div>
-                ))}
+                )}
+                {Array.from(
+                  { length: Math.ceil(moveHistory.length / 2) },
+                  (_, i) => (
+                    <div key={i} className="move-history-item">
+                      <span className="move-index">{i + 1}.</span>
+                      <span className="move-text white-move">{moveHistory[i * 2]}</span>
+                      <span className="move-text black-move">{moveHistory[i * 2 + 1] || ""}</span>
+                    </div>
+                  )
+                )}
               </div>
             </div>
 
-            <div className="voice-status-strip">{statusMessage}</div>
+            {/* Game Status */}
+            <div className="chess-status-strip">
+              {gameOver ? (
+                <div className="status-game-over">
+                  {isMultiplayer
+                    ? gameResult || "Game over"
+                    : winner
+                    ? `🏆 ${winner} wins!`
+                    : "🤝 Game drawn"}
+                </div>
+              ) : (
+                <div className="status-active">
+                  {isPaused ? "⏸ Game Paused" : statusMessage}
+                </div>
+              )}
+            </div>
           </div>
         </div>
       </div>
