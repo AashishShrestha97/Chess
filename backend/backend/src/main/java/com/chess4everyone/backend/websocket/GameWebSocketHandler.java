@@ -12,11 +12,13 @@ import org.springframework.web.socket.TextMessage;
 import org.springframework.web.socket.WebSocketSession;
 import org.springframework.web.socket.handler.AbstractWebSocketHandler;
 
+import com.chess4everyone.backend.dto.SaveGameRequest;
 import com.chess4everyone.backend.entity.MultiplayerGame;
 import com.chess4everyone.backend.entity.User;
 import com.chess4everyone.backend.repo.UserRepository;
 import com.chess4everyone.backend.repository.MultiplayerGameRepository;
 import com.chess4everyone.backend.security.JwtService;
+import com.chess4everyone.backend.service.GameService;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
@@ -26,26 +28,10 @@ import lombok.extern.slf4j.Slf4j;
 /**
  * Handles in-game WebSocket connections for live multiplayer chess.
  *
- * Frontend connects to: ws://localhost:8080/api/game/{gameId}?token=JWT
+ * Frontend URL: ws://localhost:8080/api/game/{gameId}?token=JWT
  *
- * Supported message types (client → server):
- *   MOVE        { from, to, promotion, san, fen, turn, player }
- *   OFFER_DRAW  {}
- *   ACCEPT_DRAW {}
- *   DECLINE_DRAW {}
- *   RESIGN      {}
- *   FLAG        { player }
- *   TIME_UPDATE { whiteTime, blackTime }
- *   GAME_OVER   { winner, reason }
- *
- * Broadcast message types (server → clients):
- *   GAME_START      { whitePlayer, blackPlayer, timeControl, ... }
- *   WAITING_FOR_OPPONENT {}
- *   MOVE            (echoed to opponent only, with player field)
- *   DRAW_OFFER      {}
- *   DRAW_DECLINED   {}
- *   GAME_OVER       { winner, reason }
- *   OPPONENT_DISCONNECTED {}
+ * On game end, automatically saves to the `games` table so that
+ * game history, analysis, and profile stats all work correctly.
  */
 @Component
 @RequiredArgsConstructor
@@ -56,6 +42,7 @@ public class GameWebSocketHandler extends AbstractWebSocketHandler {
     private final UserRepository userRepository;
     private final MultiplayerGameRepository multiplayerGameRepository;
     private final ObjectMapper objectMapper;
+    private final GameService gameService;
 
     // gameId → set of sessions in that game
     private final Map<Long, Set<WebSocketSession>> gameSessions = new ConcurrentHashMap<>();
@@ -69,22 +56,35 @@ public class GameWebSocketHandler extends AbstractWebSocketHandler {
     // sessionId → color ("white" or "black")
     private final Map<String, String> sessionColor = new ConcurrentHashMap<>();
 
+    // gameId → accumulated PGN (SAN moves space-separated)
+    private final Map<Long, StringBuilder> gamePgn = new ConcurrentHashMap<>();
+
+    // gameId → move count
+    private final Map<Long, Integer> gameMoveCount = new ConcurrentHashMap<>();
+
+    // gameId → latest FEN
+    private final Map<Long, String> gameLatestFen = new ConcurrentHashMap<>();
+
+    // ── gameId-level lock to ensure endGameAndSave runs exactly once ──────────
+    // We use a separate lock map here (not the per-player one in GameService)
+    // to guard the "check saved flag → set saved flag → fire async save" triple
+    // as a single atomic unit.
+    private final Map<Long, Object> gameEndLocks = new ConcurrentHashMap<>();
+
     @Override
     public void afterConnectionEstablished(WebSocketSession session) throws Exception {
         String sessionId = session.getId();
-        String path = session.getUri() != null ? session.getUri().getPath() : "";
+        String path  = session.getUri() != null ? session.getUri().getPath()  : "";
         String query = session.getUri() != null ? session.getUri().getQuery() : "";
 
-        // Extract gameId from path: /api/game/{gameId}
-        Long gameId = extractGameId(path);
-        String token = extractParam(query, "token");
+        Long   gameId = extractGameId(path);
+        String token  = extractParam(query, "token");
 
         if (gameId == null) {
             log.warn("❌ Cannot extract gameId from path: {}", path);
             session.close(CloseStatus.BAD_DATA.withReason("Invalid game path"));
             return;
         }
-
         if (token == null || token.isBlank()) {
             session.close(CloseStatus.BAD_DATA.withReason("Missing token"));
             return;
@@ -127,31 +127,33 @@ public class GameWebSocketHandler extends AbstractWebSocketHandler {
         sessionGame.put(sessionId, gameId);
         sessionColor.put(sessionId, color);
         gameSessions.computeIfAbsent(gameId, k -> ConcurrentHashMap.newKeySet()).add(session);
+        gamePgn.putIfAbsent(gameId, new StringBuilder());
+        gameMoveCount.putIfAbsent(gameId, 0);
+        gameLatestFen.putIfAbsent(gameId,
+                "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1");
+        gameEndLocks.computeIfAbsent(gameId, k -> new Object());
 
         log.info("✅ Player {} connected to game {} as {}", user.getName(), gameId, color);
 
         Set<WebSocketSession> players = gameSessions.get(gameId);
 
         if (players.size() == 1) {
-            // First player — wait for opponent
             send(session, Map.of(
-                "type", "WAITING_FOR_OPPONENT",
+                "type",    "WAITING_FOR_OPPONENT",
                 "message", "Waiting for opponent to connect..."
             ));
         } else if (players.size() >= 2) {
-            // Both players connected — start the game
             broadcastToGame(gameId, Map.of(
-                "type", "GAME_START",
-                "gameId", gameId,
-                "whitePlayer", game.getWhitePlayer().getName(),
-                "blackPlayer", game.getBlackPlayer().getName(),
+                "type",          "GAME_START",
+                "gameId",        gameId,
+                "whitePlayer",   game.getWhitePlayer().getName(),
+                "blackPlayer",   game.getBlackPlayer().getName(),
                 "whitePlayerId", game.getWhitePlayer().getId(),
                 "blackPlayerId", game.getBlackPlayer().getId(),
-                "timeControl", game.getTimeControl() != null ? game.getTimeControl() : "10+0",
-                "status", "ACTIVE"
+                "timeControl",   game.getTimeControl() != null ? game.getTimeControl() : "10+0",
+                "status",        "ACTIVE"
             ));
 
-            // Mark game as active
             game.setStatus("ACTIVE");
             game.setStartedAt(Instant.now());
             multiplayerGameRepository.save(game);
@@ -161,9 +163,9 @@ public class GameWebSocketHandler extends AbstractWebSocketHandler {
     @Override
     protected void handleTextMessage(WebSocketSession session, TextMessage message) throws Exception {
         String sessionId = session.getId();
-        Long gameId = sessionGame.get(sessionId);
-        User user = sessionUsers.get(sessionId);
-        String color = sessionColor.get(sessionId);
+        Long   gameId    = sessionGame.get(sessionId);
+        User   user      = sessionUsers.get(sessionId);
+        String color     = sessionColor.get(sessionId);
 
         if (gameId == null || user == null) {
             log.warn("⚠️ Message from unregistered session {}", sessionId);
@@ -185,9 +187,39 @@ public class GameWebSocketHandler extends AbstractWebSocketHandler {
 
         switch (type) {
             case "MOVE" -> {
-                // Add the player's color to the message
+                // Track move for PGN / FEN
+                String san = (String) data.get("san");
+                String fen = (String) data.get("fen");
+
+                if (san != null && !san.isBlank()) {
+                    StringBuilder pgn = gamePgn.computeIfAbsent(gameId, k -> new StringBuilder());
+                    int moveNum = gameMoveCount.merge(gameId, 1, Integer::sum);
+                    // Prepend move number for white moves
+                    if (color.equals("white")) {
+                        if (pgn.length() > 0) pgn.append(" ");
+                        pgn.append(((moveNum + 1) / 2)).append(". ").append(san);
+                    } else {
+                        pgn.append(" ").append(san);
+                    }
+                }
+                if (fen != null && !fen.isBlank()) {
+                    gameLatestFen.put(gameId, fen);
+                }
+
+                // Also persist FEN to multiplayer_games for recovery
+                if (fen != null) {
+                    multiplayerGameRepository.findById(gameId).ifPresent(g -> {
+                        g.setCurrentFen(fen);
+                        g.setLastMoveAt(Instant.now());
+                        if (san != null) {
+                            String cur = g.getPgn() != null ? g.getPgn() : "";
+                            g.setPgn(cur.isBlank() ? san : cur + " " + san);
+                        }
+                        multiplayerGameRepository.save(g);
+                    });
+                }
+
                 data.put("player", color);
-                // Send move only to the OPPONENT, not back to the sender
                 sendToOpponent(gameId, sessionId, data);
             }
 
@@ -197,9 +229,9 @@ public class GameWebSocketHandler extends AbstractWebSocketHandler {
             ));
 
             case "ACCEPT_DRAW" -> {
-                endGame(gameId, null, "DRAW_AGREEMENT");
+                endGameAndSave(gameId, null, "DRAW_AGREEMENT");
                 broadcastToGame(gameId, Map.of(
-                    "type", "GAME_OVER",
+                    "type",   "GAME_OVER",
                     "winner", "draw",
                     "reason", "Draw by agreement"
                 ));
@@ -212,43 +244,39 @@ public class GameWebSocketHandler extends AbstractWebSocketHandler {
 
             case "RESIGN" -> {
                 String winner = color.equals("white") ? "black" : "white";
-                endGame(gameId, winner, "RESIGN");
+                endGameAndSave(gameId, winner, "RESIGN");
                 broadcastToGame(gameId, Map.of(
-                    "type", "GAME_OVER",
+                    "type",   "GAME_OVER",
                     "winner", winner,
                     "reason", (color.equals("white") ? "White" : "Black") + " resigned"
                 ));
             }
 
             case "FLAG" -> {
-                // Player ran out of time — opponent wins
                 String flaggedPlayer = (String) data.getOrDefault("player", color);
-                String winner = flaggedPlayer.equals("white") ? "black" : "white";
-                endGame(gameId, winner, "TIMEOUT");
+                String winner        = flaggedPlayer.equals("white") ? "black" : "white";
+                endGameAndSave(gameId, winner, "TIMEOUT");
                 broadcastToGame(gameId, Map.of(
-                    "type", "GAME_OVER",
+                    "type",   "GAME_OVER",
                     "winner", winner,
                     "reason", (flaggedPlayer.equals("white") ? "White" : "Black") + " ran out of time"
                 ));
             }
 
             case "GAME_OVER" -> {
-                // Sent by a player reporting checkmate/stalemate
                 String winner = (String) data.getOrDefault("winner", "draw");
                 String reason = (String) data.getOrDefault("reason", "Checkmate");
-                endGame(gameId, winner.equals("draw") ? null : winner,
-                    reason.toUpperCase().replace(" ", "_"));
+                endGameAndSave(gameId,
+                        winner.equals("draw") ? null : winner,
+                        reason.toUpperCase().replace(" ", "_"));
                 broadcastToGame(gameId, Map.of(
-                    "type", "GAME_OVER",
+                    "type",   "GAME_OVER",
                     "winner", winner,
                     "reason", reason
                 ));
             }
 
-            case "TIME_UPDATE" -> {
-                // Forward to opponent only for clock sync
-                sendToOpponent(gameId, sessionId, data);
-            }
+            case "TIME_UPDATE" -> sendToOpponent(gameId, sessionId, data);
 
             default -> log.warn("⚠️ Unknown message type: {}", type);
         }
@@ -257,8 +285,8 @@ public class GameWebSocketHandler extends AbstractWebSocketHandler {
     @Override
     public void afterConnectionClosed(WebSocketSession session, CloseStatus status) {
         String sessionId = session.getId();
-        Long gameId = sessionGame.get(sessionId);
-        User user = sessionUsers.get(sessionId);
+        Long   gameId    = sessionGame.get(sessionId);
+        User   user      = sessionUsers.get(sessionId);
 
         log.info("🔌 Player {} disconnected from game {} ({})",
                 user != null ? user.getName() : sessionId, gameId, status);
@@ -267,17 +295,18 @@ public class GameWebSocketHandler extends AbstractWebSocketHandler {
             Set<WebSocketSession> players = gameSessions.get(gameId);
             if (players != null) {
                 players.remove(session);
-
-                // Notify remaining player
                 if (!players.isEmpty()) {
                     broadcastToGame(gameId, Map.of(
-                        "type", "OPPONENT_DISCONNECTED",
+                        "type",    "OPPONENT_DISCONNECTED",
                         "message", "Opponent disconnected"
                     ));
                 }
-
                 if (players.isEmpty()) {
                     gameSessions.remove(gameId);
+                    gamePgn.remove(gameId);
+                    gameMoveCount.remove(gameId);
+                    gameLatestFen.remove(gameId);
+                    gameEndLocks.remove(gameId);
                 }
             }
         }
@@ -293,69 +322,182 @@ public class GameWebSocketHandler extends AbstractWebSocketHandler {
         afterConnectionClosed(session, CloseStatus.SERVER_ERROR);
     }
 
-    // ── Helpers ──────────────────────────────────────────────────────────────
+    // ── Core: end game in multiplayer_games AND auto-save to games ────────────
 
     /**
-     * Broadcast to ALL players in a game (including sender)
+     * Persist result to multiplayer_games, then auto-export both players'
+     * records into the `games` table.
+     *
+     * KEY FIX: We acquire a per-gameId lock and immediately set mp.saved = true
+     * BEFORE launching the async thread. This means even if both players send
+     * GAME_OVER at the same time, only the first one through the lock will
+     * launch the save; the second will see saved=true and return early.
      */
-    private void broadcastToGame(Long gameId, Map<String, Object> data) {
-        Set<WebSocketSession> players = gameSessions.get(gameId);
-        if (players == null) return;
+    private void endGameAndSave(Long gameId, String winnerColor, String reason) {
+        try {
+            Object lock = gameEndLocks.computeIfAbsent(gameId, k -> new Object());
+            synchronized (lock) {
+                MultiplayerGame mp = multiplayerGameRepository.findById(gameId).orElse(null);
+                if (mp == null) return;
 
-        for (WebSocketSession s : players) {
-            send(s, data);
+                // ── Already processed? bail out ───────────────────────────────
+                if (Boolean.TRUE.equals(mp.getSaved())
+                        || "FINISHED".equals(mp.getStatus())) {
+                    log.info("ℹ️ Game #{} already finished/saved, skipping duplicate end", gameId);
+                    return;
+                }
+
+                // ── 1. Update multiplayer_games ───────────────────────────────
+                mp.setStatus("FINISHED");
+                if (winnerColor != null) {
+                    mp.setWinnerColor(winnerColor);
+                    mp.setResult(winnerColor.equals("white") ? "WHITE_WIN" : "BLACK_WIN");
+                } else {
+                    mp.setWinnerColor("draw");
+                    mp.setResult("DRAW");
+                }
+                mp.setTerminationReason(reason);
+                mp.setEndedAt(Instant.now());
+                mp.setCompletedAt(Instant.now());
+
+                // Merge in-memory PGN
+                StringBuilder inMemPgn = gamePgn.get(gameId);
+                if (inMemPgn != null && inMemPgn.length() > 0) {
+                    String resultTag = winnerColor == null ? "1/2-1/2"
+                            : winnerColor.equals("white") ? "1-0" : "0-1";
+                    mp.setPgn(inMemPgn.toString().trim() + " " + resultTag);
+                }
+
+                // ── 2. Mark saved=true NOW (before async thread) ──────────────
+                // This prevents a second call to endGameAndSave (e.g. from the
+                // other player's tab) from firing another async save.
+                mp.setSaved(true);
+                multiplayerGameRepository.save(mp);
+
+                log.info("✅ multiplayer_games #{} finished — winner: {}, reason: {}",
+                        gameId, winnerColor, reason);
+
+                // ── 3. Export to games table async ────────────────────────────
+                saveToGamesTableAsync(mp, winnerColor, reason);
+            }
+        } catch (Exception e) {
+            log.error("❌ Error ending game {}: {}", gameId, e.getMessage(), e);
         }
     }
 
     /**
-     * Send to the OPPONENT only (not the sender).
-     * Used for MOVE and TIME_UPDATE so the sender doesn't get an echo.
+     * Export a finished multiplayer game to the `games` table for BOTH players.
+     * Runs in a background thread so it does not block the WebSocket thread.
      */
+    private void saveToGamesTableAsync(MultiplayerGame mp, String winnerColor, String reason) {
+        // Capture values before handing off to thread
+        final String pgn         = mp.getPgn()         != null ? mp.getPgn()         : "";
+        final String timeControl = mp.getTimeControl() != null ? mp.getTimeControl() : "10+0";
+        final String gameType    = mp.getGameType()    != null ? mp.getGameType()    : "STANDARD";
+        final int    moveCount   = gameMoveCount.getOrDefault(mp.getId(), 0);
+        final User   white       = mp.getWhitePlayer();
+        final User   black       = mp.getBlackPlayer();
+        final Long   whiteTimeMs = mp.getWhiteTimeRemainingMs();
+        final Long   blackTimeMs = mp.getBlackTimeRemainingMs();
+        final String uuid        = mp.getGameUuid();
+
+        new Thread(() -> {
+            try {
+                // ── White player's record ─────────────────────────────────────
+                String whiteResult = winnerColor == null ? "DRAW"
+                        : winnerColor.equals("white") ? "WIN" : "LOSS";
+
+                SaveGameRequest whiteReq = new SaveGameRequest(
+                    black.getName(),    // opponentName
+                    whiteResult,
+                    pgn,
+                    null,               // movesJson
+                    1200,               // whiteRating (placeholder)
+                    1200,               // blackRating (placeholder)
+                    timeControl,
+                    gameType,
+                    reason,
+                    moveCount,
+                    whiteTimeMs,
+                    blackTimeMs,
+                    null,               // accuracyPercentage
+                    white.getId(),
+                    black.getId(),
+                    uuid,
+                    null                // openingName
+                );
+
+                int whiteRatingChange = whiteResult.equals("WIN") ? 16
+                        : whiteResult.equals("LOSS") ? -16 : 0;
+
+                gameService.saveGame(white, whiteReq, whiteRatingChange);
+                log.info("✅ White player {} saved to games table (result={})",
+                        white.getName(), whiteResult);
+
+                // ── Black player's record ─────────────────────────────────────
+                String blackResult = winnerColor == null ? "DRAW"
+                        : winnerColor.equals("black") ? "WIN" : "LOSS";
+
+                SaveGameRequest blackReq = new SaveGameRequest(
+                    white.getName(),    // opponentName
+                    blackResult,
+                    pgn,
+                    null,
+                    1200,
+                    1200,
+                    timeControl,
+                    gameType,
+                    reason,
+                    moveCount,
+                    whiteTimeMs,
+                    blackTimeMs,
+                    null,
+                    white.getId(),
+                    black.getId(),
+                    uuid + "-black",    // distinct UUID so dedup treats it separately
+                    null
+                );
+
+                int blackRatingChange = blackResult.equals("WIN") ? 16
+                        : blackResult.equals("LOSS") ? -16 : 0;
+
+                gameService.saveGame(black, blackReq, blackRatingChange);
+                log.info("✅ Black player {} saved to games table (result={})",
+                        black.getName(), blackResult);
+
+            } catch (Exception e) {
+                log.error("❌ Failed to auto-save multiplayer game {} to games table: {}",
+                        mp.getId(), e.getMessage(), e);
+            }
+        }, "game-save-" + mp.getId()).start();
+    }
+
+    // ── Helpers ───────────────────────────────────────────────────────────────
+
+    private void broadcastToGame(Long gameId, Map<String, Object> data) {
+        Set<WebSocketSession> players = gameSessions.get(gameId);
+        if (players == null) return;
+        for (WebSocketSession s : players) send(s, data);
+    }
+
     private void sendToOpponent(Long gameId, String senderSessionId, Map<String, Object> data) {
         Set<WebSocketSession> players = gameSessions.get(gameId);
         if (players == null) return;
-
         for (WebSocketSession s : players) {
-            if (!s.getId().equals(senderSessionId)) {
-                send(s, data);
-            }
+            if (!s.getId().equals(senderSessionId)) send(s, data);
         }
     }
 
     private void send(WebSocketSession session, Map<String, Object> data) {
         try {
-            if (session.isOpen()) {
+            if (session.isOpen())
                 session.sendMessage(new TextMessage(objectMapper.writeValueAsString(data)));
-            }
         } catch (IOException e) {
             log.error("❌ Send error to {}: {}", session.getId(), e.getMessage());
         }
     }
 
-    private void endGame(Long gameId, String winnerColor, String reason) {
-        try {
-            MultiplayerGame game = multiplayerGameRepository.findById(gameId).orElse(null);
-            if (game == null) return;
-            game.setStatus("FINISHED");
-            if (winnerColor != null) {
-                game.setWinnerColor(winnerColor);
-                game.setResult(winnerColor.equals("white") ? "WHITE_WIN" : "BLACK_WIN");
-            } else {
-                game.setWinnerColor("draw");
-                game.setResult("DRAW");
-            }
-            game.setTerminationReason(reason);
-            game.setEndedAt(Instant.now());
-            game.setCompletedAt(Instant.now());
-            multiplayerGameRepository.save(game);
-            log.info("✅ Game {} finished — winner: {}, reason: {}", gameId, winnerColor, reason);
-        } catch (Exception e) {
-            log.error("❌ Error ending game {}: {}", gameId, e.getMessage());
-        }
-    }
-
     private Long extractGameId(String path) {
-        // Path: /api/game/123
         try {
             String[] parts = path.split("/");
             return Long.parseLong(parts[parts.length - 1]);
@@ -368,9 +510,8 @@ public class GameWebSocketHandler extends AbstractWebSocketHandler {
         if (query == null || query.isBlank()) return null;
         for (String part : query.split("&")) {
             String[] kv = part.split("=", 2);
-            if (kv.length == 2 && kv[0].equals(key)) {
+            if (kv.length == 2 && kv[0].equals(key))
                 return java.net.URLDecoder.decode(kv[1], java.nio.charset.StandardCharsets.UTF_8);
-            }
         }
         return null;
     }
