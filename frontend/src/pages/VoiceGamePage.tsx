@@ -810,6 +810,7 @@ const VoiceGamePage: React.FC<VoiceGamePageProps> = ({
           accuracyPercentage: accuracy,
           whitePlayerId: mpState.whitePlayerId,
           blackPlayerId: mpState.blackPlayerId,
+          gameUuid: mpState.gameUuid,
         });
       } else {
         // Solo AI game save
@@ -1123,9 +1124,9 @@ const VoiceGamePage: React.FC<VoiceGamePageProps> = ({
     return () => clearInterval(timer);
   }, [isMultiplayer, gameOver, sendMessage]);
 
-  // Solo: save game when it ends
+  // Save game when it ends (solo and multiplayer)
   useEffect(() => {
-    if (!gameOver || isSavingGame || isMultiplayer) return;
+    if (!gameOver || isSavingGame) return;
     const saveGame = async () => {
       let result: "WIN" | "LOSS" | "DRAW" = "DRAW";
       let terminationReason = "DRAW";

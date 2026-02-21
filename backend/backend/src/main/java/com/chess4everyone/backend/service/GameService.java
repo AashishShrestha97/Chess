@@ -11,11 +11,13 @@ import com.chess4everyone.backend.dto.GameDetailDto;
 import com.chess4everyone.backend.dto.SaveGameRequest;
 import com.chess4everyone.backend.entity.Game;
 import com.chess4everyone.backend.entity.GameAnalysis;
+import com.chess4everyone.backend.entity.MultiplayerGame;
 import com.chess4everyone.backend.entity.User;
 import com.chess4everyone.backend.entity.UserProfile;
 import com.chess4everyone.backend.repo.UserRepository;
 import com.chess4everyone.backend.repository.GameAnalysisRepository;
 import com.chess4everyone.backend.repository.GameRepository;
+import com.chess4everyone.backend.repository.MultiplayerGameRepository;
 import com.chess4everyone.backend.repository.UserProfileRepository;
 
 @Service
@@ -26,17 +28,23 @@ public class GameService {
     private final UserRepository userRepository;
     private final UserProfileRepository profileRepository;
     private final StockfishAnalysisService stockfishService;
+    private final MultiplayerGameRepository multiplayerGameRepository;
+        // simple in-memory locks to avoid concurrent double-export for same multiplayer game
+        private static final java.util.concurrent.ConcurrentHashMap<String, Object> gameExportLocks =
+            new java.util.concurrent.ConcurrentHashMap<>();
 
     public GameService(GameRepository gameRepository,
                       GameAnalysisRepository analysisRepository,
                       UserRepository userRepository,
                       UserProfileRepository profileRepository,
-                      StockfishAnalysisService stockfishService) {
+                      StockfishAnalysisService stockfishService,
+                      MultiplayerGameRepository multiplayerGameRepository) {
         this.gameRepository = gameRepository;
         this.analysisRepository = analysisRepository;
         this.userRepository = userRepository;
         this.profileRepository = profileRepository;
         this.stockfishService = stockfishService;
+        this.multiplayerGameRepository = multiplayerGameRepository;
     }
 
     /**
@@ -44,7 +52,42 @@ public class GameService {
      */
     public Game saveGame(User user, SaveGameRequest request, Integer ratingChange) {
         System.out.println("💾 Saving game for user: " + user.getEmail());
-        
+        // If frontend supplied a multiplayer game UUID, try to locate the multiplayer game
+        MultiplayerGame mpGame = null;
+        if (request.gameUuid() != null) {
+            try {
+                var opt = multiplayerGameRepository.findByGameUuid(request.gameUuid());
+                if (opt.isPresent()) {
+                    mpGame = opt.get();
+                    // If multiplayer game already linked to a saved games row, return it
+                    if (mpGame.getSavedGameId() != null) {
+                        Long savedId = mpGame.getSavedGameId();
+                        System.out.println("⚠️ Multiplayer game already exported to games.id=" + savedId + ", returning existing record");
+                        return gameRepository.findById(savedId).orElse(null);
+                    }
+                }
+            } catch (Exception e) {
+                System.out.println("⚠️ Error checking multiplayer game: " + e.getMessage());
+            }
+        }
+
+        // Deduplication: check recent games for identical PGN or moves JSON
+        try {
+            List<Game> recent = gameRepository.findTop5ByUserOrderByPlayedAtDesc(user);
+            for (Game g : recent) {
+                if (g.getPgn() != null && request.pgn() != null && g.getPgn().equals(request.pgn())) {
+                    System.out.println("⚠️ Duplicate game detected by PGN — returning existing record: " + g.getId());
+                    return g; // return existing to avoid duplicate entries
+                }
+                if (g.getMovesJson() != null && request.movesJson() != null && g.getMovesJson().equals(request.movesJson())) {
+                    System.out.println("⚠️ Duplicate game detected by movesJson — returning existing record: " + g.getId());
+                    return g;
+                }
+            }
+        } catch (Exception e) {
+            System.out.println("⚠️ Error during duplicate check: " + e.getMessage());
+        }
+
         Game game = new Game();
         game.setUser(user);
         game.setWhitePlayer(request.whitePlayerId() != null ? userRepository.findById(request.whitePlayerId()).orElse(null) : null);
@@ -67,8 +110,35 @@ public class GameService {
         game.setGameDuration(request.timeControl());
         game.setTimeAgo("just now");
         
-        Game savedGame = gameRepository.save(game);
-        System.out.println("✅ Game saved with ID: " + savedGame.getId());
+        // If this is a multiplayer save, synchronize per-gameUuid to avoid concurrent duplicate exports
+        Game savedGame;
+        if (mpGame != null && request.gameUuid() != null) {
+            Object lock = gameExportLocks.computeIfAbsent(request.gameUuid(), k -> new Object());
+            synchronized (lock) {
+                // re-fetch to see if another thread saved it while we waited
+                var fresh = multiplayerGameRepository.findByGameUuid(request.gameUuid());
+                if (fresh.isPresent() && fresh.get().getSavedGameId() != null) {
+                    Long existingId = fresh.get().getSavedGameId();
+                    System.out.println("⚠️ Multiplayer game already exported (race) to games.id=" + existingId + ", returning existing record");
+                    gameExportLocks.remove(request.gameUuid());
+                    return gameRepository.findById(existingId).orElse(null);
+                }
+                savedGame = gameRepository.save(game);
+                System.out.println("✅ Game saved with ID: " + savedGame.getId());
+                try {
+                    mpGame.setSaved(true);
+                    mpGame.setSavedGameId(savedGame.getId());
+                    multiplayerGameRepository.save(mpGame);
+                    System.out.println("✅ Marked multiplayer_game " + mpGame.getId() + " as saved -> games.id=" + savedGame.getId());
+                } catch (Exception e) {
+                    System.out.println("⚠️ Failed to mark multiplayer game as saved: " + e.getMessage());
+                }
+                gameExportLocks.remove(request.gameUuid());
+            }
+        } else {
+            savedGame = gameRepository.save(game);
+            System.out.println("✅ Game saved with ID: " + savedGame.getId());
+        }
         
         // Update user profile stats
         updateUserProfile(user, request.result());
@@ -76,6 +146,17 @@ public class GameService {
         // Trigger async analysis
         analyzeGameAsync(savedGame);
         
+        // If this save corresponds to a multiplayer game, mark it as exported
+        if (mpGame != null) {
+            try {
+                mpGame.setSaved(true);
+                mpGame.setSavedGameId(savedGame.getId());
+                multiplayerGameRepository.save(mpGame);
+                System.out.println("✅ Marked multiplayer_game " + mpGame.getId() + " as saved -> games.id=" + savedGame.getId());
+            } catch (Exception e) {
+                System.out.println("⚠️ Failed to mark multiplayer game as saved: " + e.getMessage());
+            }
+        }
         return savedGame;
     }
 

@@ -21,10 +21,11 @@ CREATE TABLE IF NOT EXISTS game_modes (
 );
 
 -- Insert default game modes
-INSERT IGNORE INTO game_modes (name, display_name, description, min_time_minutes, max_time_minutes, increment_seconds, icon) VALUES
+INSERT IGNORE INTO game_modes 
+(name, display_name, description, min_time_minutes, max_time_minutes, increment_seconds, icon) 
+VALUES
 ('BULLET', 'Bullet', 'Games with 1-2 minutes time control', 1, 2, 0, '⚡'),
 ('BLITZ', 'Blitz', 'Games with 3-5 minutes time control', 3, 5, 0, '🔥'),
-('RAPID', 'Rapid', 'Games with 10-25 minutes time control', 10, 25, 0, '⚔️'),
 ('CLASSICAL', 'Classical', 'Games with 30+ minutes time control', 30, 999, 0, '👑'),
 ('BULLET_INC', 'Bullet +', 'Bullet games with increment', 1, 2, 1, '⚡➕'),
 ('BLITZ_INC', 'Blitz +', 'Blitz games with increment', 3, 5, 2, '🔥➕'),
@@ -197,3 +198,9 @@ CREATE TABLE IF NOT EXISTS player_analysis (
 );
 
 SHOW TABLES;
+-- ALTER TABLE game_modes
+-- ADD COLUMN saved TINYINT(1) NOT NULL DEFAULT 0,
+-- ADD COLUMN saved_game_id BIGINT DEFAULT NULL,
+-- ADD CONSTRAINT fk_mp_saved_game 
+-- FOREIGN KEY (saved_game_id) REFERENCES games(id) ON DELETE SET NULL;
+select * from multiplayer_games;

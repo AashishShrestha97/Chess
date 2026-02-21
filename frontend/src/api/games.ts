@@ -16,6 +16,7 @@ export interface SaveGamePayload {
   accuracyPercentage: number;
   whitePlayerId?: number;
   blackPlayerId?: number;
+  gameUuid?: string;
   openingName?: string;
 }
 

@@ -16,5 +16,6 @@ public record SaveGameRequest(
     Integer accuracyPercentage,
     Long whitePlayerId,
     Long blackPlayerId,
+    String gameUuid,
     String openingName
 ) {}

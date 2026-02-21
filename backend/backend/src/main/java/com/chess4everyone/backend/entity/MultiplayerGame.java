@@ -89,4 +89,12 @@ public class MultiplayerGame {
 
     @Column(name = "ended_at")
     private Instant endedAt;
+
+    // Whether this multiplayer game has been exported/saved into the `games` table
+    @Column(name = "saved", nullable = false)
+    private Boolean saved = false;
+
+    // Link to the saved `games.id` when saved
+    @Column(name = "saved_game_id")
+    private Long savedGameId;
 }
