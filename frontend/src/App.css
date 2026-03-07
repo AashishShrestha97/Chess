@@ -7,7 +7,7 @@
     --gold: #ffd700;
     --gold-2: #fff28e;
     --card-bg: rgba(20, 20, 20, 0.65);
-    /* <-- transparent dark card */
+    /* transparent dark card */
     --card-border: rgba(255, 215, 0, 0.15);
 }
 
@@ -15,7 +15,9 @@
     box-sizing: border-box;
 }
 
-html, body, #root {
+html,
+body,
+#root {
     height: 100%;
 }
 
@@ -25,6 +27,132 @@ body {
     background: radial-gradient(1200px 500px at 50% -10%, #18150a 0%, #0a0a0a 35%, #070707 100%);
     color: var(--text);
     scroll-behavior: smooth;
+}
+
+body.light-theme {
+    --bg: #ffffff;
+    --panel: #f5f5f5;
+    --text: #111111;
+    --muted: #555555;
+    --card-bg: #ffffff;
+    --card-border: rgba(0, 0, 0, 0.06);
+
+    /* Force-overrides for page CSS files that redefine :root variables */
+    --bg-primary: #ffffff !important;
+    --bg-secondary: #f5f5f5 !important;
+    --bg-card: #ffffff !important;
+    --border-color: rgba(0, 0, 0, 0.10) !important;
+    --text-primary: #111111 !important;
+    --text-secondary: #333333 !important;
+    --text-muted: #666666 !important;
+
+    /* Keep your gold accent consistent in light mode */
+    --accent-yellow: #c59c00 !important;
+    --gold: #c59c00 !important;
+    --gold-2: #ffd54a !important;
+
+    background: #ffffff;
+    color: var(--text);
+}
+
+body.dark-theme {
+    background: radial-gradient(1200px 500px at 50% -10%, #18150a 0%, #0a0a0a 35%, #070707 100%);
+    color: var(--text);
+}
+
+/* Page-level light theme overrides so every screen respects light mode */
+body.light-theme .home-page,
+body.light-theme .rankings-page,
+body.light-theme .settings-page,
+body.light-theme .profile-page,
+body.light-theme .standard-chess-page,
+body.light-theme .voice-game-page,
+body.light-theme .mp-chess-page,
+body.light-theme .game-history-page,
+body.light-theme .gr-page,
+body.light-theme .matchmaking-page,
+body.light-theme .admin-page,
+body.light-theme .login-wrap,
+body.light-theme .signin-wrap {
+    background: #f5f5f5;
+    color: #111111;
+}
+
+/* Light mode: common “card / panel” surfaces across pages */
+body.light-theme .panel,
+body.light-theme .stat-card,
+body.light-theme .modal-card,
+body.light-theme .settings-body,
+body.light-theme .profile-section,
+body.light-theme .gh-games-card,
+body.light-theme .gh-detail-card,
+body.light-theme .gh-analysis-card,
+body.light-theme .gr-board-card,
+body.light-theme .gr-moves-card,
+body.light-theme .gr-info-card,
+body.light-theme .gr-move-analysis-card,
+body.light-theme .gr-stats-card,
+body.light-theme .rankings-table-card,
+body.light-theme .podium-card,
+body.light-theme .matchmaking-card,
+body.light-theme .mp-player-card,
+body.light-theme .mp-move-history,
+body.light-theme .mp-game-over-card {
+    background: #ffffff !important;
+    border-color: rgba(0, 0, 0, 0.10) !important;
+    color: #111111 !important;
+    box-shadow: 0 12px 36px rgba(0, 0, 0, 0.10) !important;
+}
+
+/* Light mode: inputs/search bars should be light, readable */
+body.light-theme input,
+body.light-theme select,
+body.light-theme textarea,
+body.light-theme .rankings-search,
+body.light-theme .setting-input,
+body.light-theme .setting-select,
+body.light-theme .modal-input {
+    background: #ffffff !important;
+    color: #111111 !important;
+    border-color: rgba(0, 0, 0, 0.15) !important;
+}
+
+body.light-theme input::placeholder,
+body.light-theme textarea::placeholder {
+    color: #777777 !important;
+}
+
+/* Light mode: headings/text that are hard-coded white in page CSS */
+body.light-theme h1,
+body.light-theme h2,
+body.light-theme h3,
+body.light-theme h4,
+body.light-theme h5,
+body.light-theme h6,
+body.light-theme .page-title,
+body.light-theme .rankings-title,
+body.light-theme .gh-title,
+body.light-theme .gr-title {
+    color: #111111 !important;
+}
+
+/* Light mode: reduce dark overlays used in some pages */
+body.light-theme .settings-tabs {
+    border-bottom-color: rgba(0, 0, 0, 0.10) !important;
+}
+
+body.light-theme .tab-btn {
+    color: #333333 !important;
+}
+
+body.light-theme .tab-btn:hover {
+    background: rgba(0, 0, 0, 0.04) !important;
+    color: #111111 !important;
+}
+
+body.light-theme .tab-btn.active {
+    color: #111111 !important;
+    background: rgba(197, 156, 0, 0.12) !important;
 }
 
 /* Links */
@@ -57,7 +185,8 @@ a {
 }
 
 @keyframes glowPulse {
-    0%, 100% {
+    0%,
+    100% {
         box-shadow: 0 0 14px rgba(255, 215, 0, .25);
     }
 

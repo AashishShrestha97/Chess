@@ -5,7 +5,8 @@ import { useAuth } from "../../context/AuthProvider";
 import { getAllNotifications, type NotificationDto } from "../../api/notifications";
 import NotificationCenter from "../NotificationCenter/NotificationCenter";
 import Crown from "../../assets/Crown.png";
-import { FiBell } from "react-icons/fi";
+import { FiBell, FiSun, FiMoon } from "react-icons/fi";
+import { useTheme } from "../../context/ThemeProvider";
 
 interface NavbarProps {
   rating: number;
@@ -17,6 +18,7 @@ const Navbar: React.FC<NavbarProps> = ({ rating, streak }) => {
   const navigate = useNavigate();
   const [notificationCenterOpen, setNotificationCenterOpen] = useState(false);
   const [unreadCount, setUnreadCount] = useState(0);
+  const { theme, toggleTheme } = useTheme();
 
   useEffect(() => {
     // Load unread count on mount
@@ -76,7 +78,7 @@ const Navbar: React.FC<NavbarProps> = ({ rating, streak }) => {
             </a>
           </div>
 
-          {/* Stats + Notifications + Accessibility + Logout */}
+          {/* Stats + Notifications + Theme + Logout */}
           <div className="nav-stats">
             <div className="streak-badge">
               <span className="streak-icon">🔥</span>
@@ -84,7 +86,7 @@ const Navbar: React.FC<NavbarProps> = ({ rating, streak }) => {
             </div>
 
             <div className="rating-badge">Rating: {rating}</div>
-            
+
             {/* Notification Bell */}
             <div className="notification-bell">
               <button
@@ -96,6 +98,15 @@ const Navbar: React.FC<NavbarProps> = ({ rating, streak }) => {
                 {unreadCount > 0 && <span className="unread-badge">{unreadCount}</span>}
               </button>
             </div>
+
+            <button
+              type="button"
+              className="theme-toggle-btn"
+              onClick={toggleTheme}
+              aria-label={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
+            >
+              {theme === "dark" ? <FiSun /> : <FiMoon />}
+            </button>
 
             <button className="logout-btn" onClick={handleLogout}>
               Logout

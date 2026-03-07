@@ -12,6 +12,7 @@ import GameHistoryPage from './pages/GameHistoryPage';
 import GameReviewPage from './pages/GameReviewPage';
 import ProfilePage from './pages/ProfilePage';
 import AdminPage from './pages/AdminPage';
+import RankingsPage from './pages/RankingsPage';
 
 import "./App.css";
 import VoiceGamePage from "./pages/VoiceGamePage";
@@ -28,7 +29,7 @@ const App: React.FC = () => {
         <Route path="/" element={<LandingPage />} />
         <Route path="/login" element={<LoginPage />} />
         <Route path="/signin" element={<SignInPage />} />
-        
+
         {/* Protected routes */}
         <Route path="/home" element={<ProtectedRoute><HomePage /></ProtectedRoute>} />
         <Route path="/profile" element={<ProtectedRoute><ProfilePage /></ProtectedRoute>} />
@@ -38,6 +39,7 @@ const App: React.FC = () => {
         <Route path="/settings" element={<ProtectedRoute><SettingsPage /></ProtectedRoute>} />
         <Route path="/game-history" element={<ProtectedRoute><GameHistoryPage /></ProtectedRoute>} />
         <Route path="/game-review/:gameId" element={<ProtectedRoute><GameReviewPage /></ProtectedRoute>} />
+        <Route path="/rankings" element={<ProtectedRoute><RankingsPage /></ProtectedRoute>} />
 
         {/* Multiplayer routes */}
         <Route path="/matchmaking" element={<ProtectedRoute><MatchmakingPage /></ProtectedRoute>} />

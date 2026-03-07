@@ -4,12 +4,18 @@
     box-sizing: border-box;
 }
 
-body {
+body.dark-theme {
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
     background: #0a0a0a;
     color: white;
     overflow-x: hidden;
     line-height: 1.6;
+}
+
+body.light-theme {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+    background: #ffffff;
+    color: #111111;
 }
 
 main {
@@ -55,8 +61,8 @@ html {
     outline-offset: 2px;
 }
 
-/* Animated background particles (optional enhancement) */
-body::before {
+/* Animated background particles (dark theme only) */
+body.dark-theme::before {
     content: '';
     position: fixed;
     top: 0;
@@ -95,7 +101,8 @@ main>* {
 
 /* Responsive adjustments */
 @media (max-width: 768px) {
-    body {
+    body.dark-theme,
+    body.light-theme {
         font-size: 14px;
     }
 }

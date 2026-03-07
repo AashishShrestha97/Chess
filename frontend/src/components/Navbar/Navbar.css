@@ -278,6 +278,92 @@
     transform: translateY(0);
 }
 
+.theme-toggle-btn {
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 10px;
+    color: #e8e8e8;
+    font-size: 1.1rem;
+    padding: 7px 10px;
+    cursor: pointer;
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 36px;
+    height: 36px;
+}
+
+.theme-toggle-btn:hover {
+    background: rgba(255, 255, 255, 0.12);
+    border-color: rgba(255, 255, 255, 0.3);
+    transform: translateY(-1px);
+}
+
+.theme-toggle-btn:active {
+    transform: translateY(0);
+}
+
+/* Light theme overrides */
+body.light-theme .navbar {
+    background: rgba(255, 255, 255, 0.98);
+    border-bottom: 1px solid rgba(0, 0, 0, 0.06);
+    box-shadow: 0 4px 24px rgba(0, 0, 0, 0.08);
+}
+
+body.light-theme .brand-name {
+    color: #c59c00;
+}
+
+body.light-theme .nav-link {
+    color: #333333;
+}
+
+body.light-theme .nav-link:hover {
+    background: rgba(0, 0, 0, 0.04);
+    color: #000000;
+}
+
+body.light-theme .nav-link.active {
+    background: linear-gradient(135deg, #ffd700, #f3c300);
+    color: #000;
+}
+
+body.light-theme .streak-badge {
+    background: rgba(0, 0, 0, 0.03);
+    border-color: rgba(0, 0, 0, 0.08);
+    color: #222222;
+}
+
+body.light-theme .rating-badge {
+    background: rgba(255, 215, 0, 0.12);
+    border-color: rgba(255, 215, 0, 0.3);
+    color: #c59c00;
+}
+
+body.light-theme .logout-btn,
+body.light-theme .bell-btn,
+body.light-theme .theme-toggle-btn {
+    background: rgba(0, 0, 0, 0.03);
+    border-color: rgba(0, 0, 0, 0.08);
+    color: #222222;
+}
+
+body.light-theme .bell-btn:hover {
+    background: rgba(15, 155, 158, 0.1);
+    border-color: rgba(15, 155, 158, 0.3);
+}
+
+body.light-theme .logout-btn:hover {
+    background: rgba(214, 75, 75, 0.12);
+    border-color: rgba(214, 75, 75, 0.4);
+    color: #b00000;
+}
+
+body.light-theme .bell-btn .unread-badge {
+    border-color: #ffffff;
+}
+
 /* Responsive */
 @media (max-width: 1100px) {
     .nav-container {
