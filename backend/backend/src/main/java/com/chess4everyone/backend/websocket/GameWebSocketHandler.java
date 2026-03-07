@@ -229,7 +229,7 @@ public class GameWebSocketHandler extends AbstractWebSocketHandler {
             ));
 
             case "ACCEPT_DRAW" -> {
-                endGameAndSave(gameId, null, "DRAW_AGREEMENT");
+                endGameAndSave(gameId, null, "DRAW_AGREEMENT", null);
                 broadcastToGame(gameId, Map.of(
                     "type",   "GAME_OVER",
                     "winner", "draw",
@@ -244,7 +244,7 @@ public class GameWebSocketHandler extends AbstractWebSocketHandler {
 
             case "RESIGN" -> {
                 String winner = color.equals("white") ? "black" : "white";
-                endGameAndSave(gameId, winner, "RESIGN");
+                endGameAndSave(gameId, winner, "RESIGN", null);
                 broadcastToGame(gameId, Map.of(
                     "type",   "GAME_OVER",
                     "winner", winner,
@@ -255,7 +255,7 @@ public class GameWebSocketHandler extends AbstractWebSocketHandler {
             case "FLAG" -> {
                 String flaggedPlayer = (String) data.getOrDefault("player", color);
                 String winner        = flaggedPlayer.equals("white") ? "black" : "white";
-                endGameAndSave(gameId, winner, "TIMEOUT");
+                endGameAndSave(gameId, winner, "TIMEOUT", null);
                 broadcastToGame(gameId, Map.of(
                     "type",   "GAME_OVER",
                     "winner", winner,
@@ -266,9 +266,11 @@ public class GameWebSocketHandler extends AbstractWebSocketHandler {
             case "GAME_OVER" -> {
                 String winner = (String) data.getOrDefault("winner", "draw");
                 String reason = (String) data.getOrDefault("reason", "Checkmate");
+                String movesJson = (String) data.getOrDefault("movesJson", null);
                 endGameAndSave(gameId,
                         winner.equals("draw") ? null : winner,
-                        reason.toUpperCase().replace(" ", "_"));
+                        reason.toUpperCase().replace(" ", "_"),
+                        movesJson);
                 broadcastToGame(gameId, Map.of(
                     "type",   "GAME_OVER",
                     "winner", winner,
@@ -333,7 +335,7 @@ public class GameWebSocketHandler extends AbstractWebSocketHandler {
      * GAME_OVER at the same time, only the first one through the lock will
      * launch the save; the second will see saved=true and return early.
      */
-    private void endGameAndSave(Long gameId, String winnerColor, String reason) {
+    private void endGameAndSave(Long gameId, String winnerColor, String reason, String movesJson) {
         try {
             Object lock = gameEndLocks.computeIfAbsent(gameId, k -> new Object());
             synchronized (lock) {
@@ -368,6 +370,11 @@ public class GameWebSocketHandler extends AbstractWebSocketHandler {
                     mp.setPgn(inMemPgn.toString().trim() + " " + resultTag);
                 }
 
+                // ✅ Store moves_json from client
+                if (movesJson != null && !movesJson.isBlank()) {
+                    mp.setMovesJson(movesJson);
+                }
+
                 // ── 2. Mark saved=true NOW (before async thread) ──────────────
                 // This prevents a second call to endGameAndSave (e.g. from the
                 // other player's tab) from firing another async save.
@@ -392,6 +399,7 @@ public class GameWebSocketHandler extends AbstractWebSocketHandler {
     private void saveToGamesTableAsync(MultiplayerGame mp, String winnerColor, String reason) {
         // Capture values before handing off to thread
         final String pgn         = mp.getPgn()         != null ? mp.getPgn()         : "";
+        final String movesJson   = mp.getMovesJson()   != null ? mp.getMovesJson()   : null;
         final String timeControl = mp.getTimeControl() != null ? mp.getTimeControl() : "10+0";
         final String gameType    = mp.getGameType()    != null ? mp.getGameType()    : "STANDARD";
         final int    moveCount   = gameMoveCount.getOrDefault(mp.getId(), 0);
@@ -411,7 +419,7 @@ public class GameWebSocketHandler extends AbstractWebSocketHandler {
                     black.getName(),    // opponentName
                     whiteResult,
                     pgn,
-                    null,               // movesJson
+                    movesJson,          // ✅ Use moves_json from multiplayer game
                     1200,               // whiteRating (placeholder)
                     1200,               // blackRating (placeholder)
                     timeControl,
@@ -442,7 +450,7 @@ public class GameWebSocketHandler extends AbstractWebSocketHandler {
                     white.getName(),    // opponentName
                     blackResult,
                     pgn,
-                    null,
+                    movesJson,          // ✅ Use moves_json from multiplayer game
                     1200,
                     1200,
                     timeControl,

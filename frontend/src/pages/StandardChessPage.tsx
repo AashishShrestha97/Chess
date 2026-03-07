@@ -191,8 +191,9 @@ const StandardChessPage: React.FC<StandardChessPageProps> = ({
 
   // Initialize game recorder (both solo and multiplayer)
   useEffect(() => {
+    if (isMultiplayer) return; // Don't re-init recorder during active multiplayer game
     gameRecorderRef.current = new GameRecorder(effectiveTimeControl);
-  }, [effectiveTimeControl]);
+  }, [effectiveTimeControl, isMultiplayer]);
 
   // Initialize Stockfish AI (solo only)
   useEffect(() => {
@@ -239,7 +240,6 @@ const StandardChessPage: React.FC<StandardChessPageProps> = ({
   }, []);
 
   // ---------- Flag / timeout ----------
-  // Use refs inside handleFlag to avoid stale closure issues in setInterval
   const handleFlag = useCallback((flagged: "white" | "black") => {
     if (gameOverRef.current) return;
     const winColor = flagged === "white" ? "Black" : "White";
@@ -267,29 +267,23 @@ const StandardChessPage: React.FC<StandardChessPageProps> = ({
         case "GAME_START": {
           console.log("🚀 GAME_START received:", data);
 
-          // Parse time control from GAME_START message, fallback to mpState.timeControl
           let tc: string = (data.timeControl as string) || mpState?.timeControl || "10+0";
           console.log("🕒 Time control from server:", tc);
-
-          // Handle encoded time control (may come as "10%2B0" from URL)
           tc = tc.replace("%2B", "+").replace("%2b", "+");
 
-          // UPDATE effectiveTimeControl state so it's used for saving the game
           setEffectiveTimeControl(tc);
           console.log("✅ Setting effectiveTimeControl to:", tc);
+          
+          // ✅ Initialize fresh GameRecorder for multiplayer
+          gameRecorderRef.current = new GameRecorder(tc);
 
           const [mainPart, incStr] = tc.split("+");
           let minutes = Number(mainPart) || 10;
           let inc = Number(incStr) || 0;
-
-          // Validation: ensure positive values
           if (minutes <= 0) minutes = 10;
           if (inc < 0) inc = 0;
-
           const totalSecs = Math.max(60, minutes * 60);
-          console.log("🕐 Parsed time - Minutes:", minutes, "Increment:", inc, "Total Seconds:", totalSecs);
 
-          // Reset board to starting position
           gameRef.current = new Chess();
           setFen(gameRef.current.fen());
           setMoveHistory([]);
@@ -300,7 +294,6 @@ const StandardChessPage: React.FC<StandardChessPageProps> = ({
           setGameResult(null);
           gameOverRef.current = false;
 
-          // Set clocks from the server's time control
           setWhiteTime(totalSecs);
           setBlackTime(totalSecs);
           whiteTimeRef.current = totalSecs;
@@ -308,18 +301,14 @@ const StandardChessPage: React.FC<StandardChessPageProps> = ({
           setIncrement(inc);
           incrementRef.current = inc;
 
-          // Reset time warnings
           whiteTimeWarned30.current = false;
           whiteTimeWarned10.current = false;
           blackTimeWarned30.current = false;
           blackTimeWarned10.current = false;
 
-          // Set myColor correctly from server data
           const myColorFromServer = (data.myColor as "white" | "black") || mpState?.color || "white";
           myColorRef.current = myColorFromServer;
-          console.log("🎨 My color:", myColorFromServer);
 
-          // Start the clock
           clockStartedRef.current = true;
           setClockStarted(true);
           gameStartedRef.current = true;
@@ -334,7 +323,6 @@ const StandardChessPage: React.FC<StandardChessPageProps> = ({
         }
 
         case "MOVE": {
-          // Opponent's move arrives — apply it to the board
           const game = gameRef.current;
           try {
             const move = game.move({
@@ -365,10 +353,8 @@ const StandardChessPage: React.FC<StandardChessPageProps> = ({
                 });
               }
 
-              // Record opponent's move in game recorder (multiplayer)
               if (isMultiplayer && gameRecorderRef.current && move) {
                 gameRecorderRef.current.recordMove(move.san);
-                // Update time for the opponent who just moved
                 const movedColor = data.player as "white" | "black";
                 if (movedColor === "white") gameRecorderRef.current.updateTime("white", whiteTimeRef.current * 1000);
                 else gameRecorderRef.current.updateTime("black", blackTimeRef.current * 1000);
@@ -379,7 +365,6 @@ const StandardChessPage: React.FC<StandardChessPageProps> = ({
               setCurrentTurn(nextTurnChar);
               currentTurnRef.current = nextTurnChar;
 
-              // Apply increment to player who just moved
               const movedColor = data.player as "white" | "black";
               if (incrementRef.current > 0) {
                 if (movedColor === "white")
@@ -393,11 +378,25 @@ const StandardChessPage: React.FC<StandardChessPageProps> = ({
                 gameOverRef.current = true;
                 setGameResult(iWin ? "You win! by checkmate" : "You lose! by checkmate");
                 setStatusMessage("Checkmate!");
+                // ✅ Opponent's move caused checkmate — notify server to save with moves_json
+                sendMessage({
+                  type: "GAME_OVER",
+                  winner: movedColor,
+                  reason: "Checkmate",
+                  movesJson: gameRecorderRef.current?.getMovesAsJSON() ?? null,
+                });
               } else if (game.isDraw()) {
                 setGameOver(true);
                 gameOverRef.current = true;
                 setGameResult("Draw!");
                 setStatusMessage("Game drawn");
+                // ✅ Notify server to save draw with moves_json
+                sendMessage({
+                  type: "GAME_OVER",
+                  winner: "draw",
+                  reason: "Draw",
+                  movesJson: gameRecorderRef.current?.getMovesAsJSON() ?? null,
+                });
               } else if (game.isCheck()) {
                 setStatusMessage("Check!");
               } else {
@@ -413,12 +412,10 @@ const StandardChessPage: React.FC<StandardChessPageProps> = ({
         }
 
         case "GAME_OVER": {
-          // Ignore GAME_OVER if the game hasn't started yet (premature disconnect)
           if (!gameStartedRef.current) {
-            console.warn("⚠️ Ignoring GAME_OVER — game hasn't started yet. Gamedata:", data);
+            console.warn("⚠️ Ignoring GAME_OVER — game hasn't started yet.");
             break;
           }
-
           if (gameOverRef.current) {
             console.warn("⚠️ GAME_OVER already processed, ignoring duplicate");
             break;
@@ -429,7 +426,6 @@ const StandardChessPage: React.FC<StandardChessPageProps> = ({
 
           const winner = data.winner as string;
           const reason = data.reason as string || "Game over";
-          console.log("🏁 Game over - Winner:", winner, "Reason:", reason);
 
           if (winner === "draw" || data.result === "DRAW") {
             setGameResult(`Draw — ${reason.toLowerCase()}`);
@@ -465,7 +461,6 @@ const StandardChessPage: React.FC<StandardChessPageProps> = ({
         }
 
         case "OPPONENT_DISCONNECTED": {
-          // Only update status, don't end the game immediately
           setStatusMessage("Opponent disconnected");
           setMpConnectionStatus("disconnected");
           break;
@@ -473,7 +468,7 @@ const StandardChessPage: React.FC<StandardChessPageProps> = ({
       }
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [mpState?.timeControl, mpState?.color]
+    [mpState?.timeControl, mpState?.color, sendMessage]
   );
 
   // ── Multiplayer WebSocket ──────────────────────────────────────────────────
@@ -532,7 +527,7 @@ const StandardChessPage: React.FC<StandardChessPageProps> = ({
     };
   }, [isMultiplayer, mpState?.gameId, handleServerMessage]);
 
-  // Auto-resign when player leaves (clicks back, closes tab, or goes offline)
+  // Auto-resign when player leaves
   useEffect(() => {
     if (!isMultiplayer) return;
 
@@ -543,7 +538,6 @@ const StandardChessPage: React.FC<StandardChessPageProps> = ({
     };
 
     const handlePopState = () => {
-      console.log("🔙 Back button pressed - auto resigning");
       if (gameStartedRef.current && !gameOverRef.current && wsRef.current?.readyState === WebSocket.OPEN) {
         sendMessage({ type: "RESIGN" });
       }
@@ -559,17 +553,14 @@ const StandardChessPage: React.FC<StandardChessPageProps> = ({
     };
   }, [isMultiplayer, sendMessage]);
 
-  // Timeout to detect if GAME_START isn't received (backend issue)
+  // Timeout to detect if GAME_START isn't received
   useEffect(() => {
     if (!isMultiplayer) return;
-
     const timeoutId = setTimeout(() => {
       if (!gameStartedRef.current && mpConnectionStatus === "waiting") {
-        console.warn("⚠️ GAME_START not received after 30 seconds - possible backend issue");
         setStatusMessage("⚠️ Game start delayed - checking server...");
       }
     }, 30000);
-
     return () => clearTimeout(timeoutId);
   }, [isMultiplayer, mpConnectionStatus]);
 
@@ -621,10 +612,8 @@ const StandardChessPage: React.FC<StandardChessPageProps> = ({
       });
     }
 
-    // Record move in game recorder (both solo and multiplayer)
     if (gameRecorderRef.current) {
       gameRecorderRef.current.recordMove(moveInput);
-      // Pass remaining time in ms using refs to get current values
       if (move.color === "w") gameRecorderRef.current.updateTime("black", blackTimeRef.current * 1000);
       else gameRecorderRef.current.updateTime("white", whiteTimeRef.current * 1000);
     }
@@ -636,7 +625,6 @@ const StandardChessPage: React.FC<StandardChessPageProps> = ({
 
     const sideToMove = game.turn();
 
-    // Apply increment
     if (incrementRef.current > 0) {
       if (sideToMove === "b") setWhiteTime((prev) => prev + incrementRef.current);
       else setBlackTime((prev) => prev + incrementRef.current);
@@ -667,18 +655,33 @@ const StandardChessPage: React.FC<StandardChessPageProps> = ({
       if (isMultiplayer) {
         const iWin = winColor.toLowerCase() === myColorRef.current;
         setGameResult(iWin ? "You win! by checkmate" : "You lose! by checkmate");
+        // ✅ Tell backend to save the game
+        sendMessage({
+          type: "GAME_OVER",
+          winner: winColor.toLowerCase(),
+          reason: "Checkmate",
+        });
       }
       playSound("gameEnd");
     } else if (game.isDraw()) {
       let msg = "Game drawn";
-      if (game.isStalemate()) msg = "Stalemate! Game drawn";
-      else if (game.isThreefoldRepetition()) msg = "Draw by threefold repetition";
-      else if (game.isInsufficientMaterial()) msg = "Draw by insufficient material";
+      let drawReason = "Draw";
+      if (game.isStalemate()) { msg = "Stalemate! Game drawn"; drawReason = "Stalemate"; }
+      else if (game.isThreefoldRepetition()) { msg = "Draw by threefold repetition"; drawReason = "Threefold repetition"; }
+      else if (game.isInsufficientMaterial()) { msg = "Draw by insufficient material"; drawReason = "Insufficient material"; }
       setGameOver(true);
       gameOverRef.current = true;
       setWinner(null);
       setStatusMessage(msg);
-      if (isMultiplayer) setGameResult("Draw!");
+      if (isMultiplayer) {
+        setGameResult("Draw!");
+        // ✅ Tell backend to save the game
+        sendMessage({
+          type: "GAME_OVER",
+          winner: "draw",
+          reason: drawReason,
+        });
+      }
       playSound("gameEnd");
     } else if (game.isCheck()) {
       setStatusMessage(
@@ -713,7 +716,8 @@ const StandardChessPage: React.FC<StandardChessPageProps> = ({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isMultiplayer, playSound, sendMessage]);
 
-  // Save completed game to database (both solo and multiplayer)
+  // Save completed game to database — SOLO ONLY
+  // Multiplayer games are saved by the backend WebSocket handler (endGameAndSave)
   const saveGameToDB = useCallback(async (result: "WIN" | "LOSS" | "DRAW", terminationReason: string) => {
     if (!gameRecorderRef.current) return;
     setIsSavingGame(true);
@@ -726,52 +730,25 @@ const StandardChessPage: React.FC<StandardChessPageProps> = ({
       }
       const movesJson = recorder.getMovesAsJSON();
       const gameStats = recorder.getGameStats();
-      
-      if (isMultiplayer && mpState) {
-        // Multiplayer game save
-        const whiteName = mpState.whitePlayer;
-        const blackName = mpState.blackPlayer;
-        const pgn = recorder.generatePGN(
-          whiteName, blackName, result,
-          effectiveTimeControl, "STANDARD", terminationReason
-        );
-        // Estimate ratings from player data
-        const accuracy = 75 + Math.floor(Math.random() * 20);
-        await gameService.saveGame({
-          opponentName: myColor === "white" ? blackName : whiteName,
-          result, pgn, movesJson,
-          whiteRating: 1600, blackRating: 1600,
-          timeControl: effectiveTimeControl,
-          gameType: "STANDARD" as const,
-          terminationReason,
-          moveCount: gameStats.moveCount,
-          totalTimeWhiteMs: gameStats.whiteTimeUsedMs,
-          totalTimeBlackMs: gameStats.blackTimeUsedMs,
-          accuracyPercentage: accuracy,
-          whitePlayerId: mpState.whitePlayerId,
-          blackPlayerId: mpState.blackPlayerId,
-          gameUuid: mpState.gameUuid,
-        });
-      } else {
-        // Solo AI game save
-        const pgn = recorder.generatePGN(
-          "You (White)", "ChessMaster AI", result,
-          effectiveTimeControl, "STANDARD", terminationReason
-        );
-        const accuracy = 75 + Math.floor(Math.random() * 20);
-        await gameService.saveGame({
-          opponentName: "ChessMaster AI",
-          result, pgn, movesJson,
-          whiteRating: 1847, blackRating: 1923,
-          timeControl: effectiveTimeControl,
-          gameType: "STANDARD" as const,
-          terminationReason,
-          moveCount: gameStats.moveCount,
-          totalTimeWhiteMs: gameStats.whiteTimeUsedMs,
-          totalTimeBlackMs: gameStats.blackTimeUsedMs,
-          accuracyPercentage: accuracy,
-        });
-      }
+
+      // Solo AI game save
+      const pgn = recorder.generatePGN(
+        "You (White)", "ChessMaster AI", result,
+        effectiveTimeControl, "STANDARD", terminationReason
+      );
+      const accuracy = 75 + Math.floor(Math.random() * 20);
+      await gameService.saveGame({
+        opponentName: "ChessMaster AI",
+        result, pgn, movesJson,
+        whiteRating: 1847, blackRating: 1923,
+        timeControl: effectiveTimeControl,
+        gameType: "STANDARD" as const,
+        terminationReason,
+        moveCount: gameStats.moveCount,
+        totalTimeWhiteMs: gameStats.whiteTimeUsedMs,
+        totalTimeBlackMs: gameStats.blackTimeUsedMs,
+        accuracyPercentage: accuracy,
+      });
       setStatusMessage("✅ Game saved! View in Past Games.");
     } catch (error) {
       console.error("❌ Failed to save game:", error);
@@ -779,7 +756,7 @@ const StandardChessPage: React.FC<StandardChessPageProps> = ({
     } finally {
       setIsSavingGame(false);
     }
-  }, [effectiveTimeControl, isMultiplayer, mpState, myColor]);
+  }, [effectiveTimeControl]);
 
   // Solo AI move
   const makeAIMove = useCallback(async () => {
@@ -917,7 +894,6 @@ const StandardChessPage: React.FC<StandardChessPageProps> = ({
 
   const handleBack = useCallback(() => {
     if (isMultiplayer && gameStartedRef.current && !gameOverRef.current) {
-      console.log("🔙 Going back - auto resigning");
       if (wsRef.current?.readyState === WebSocket.OPEN) {
         sendMessage({ type: "RESIGN" });
       }
@@ -927,7 +903,7 @@ const StandardChessPage: React.FC<StandardChessPageProps> = ({
     else navigate("/home");
   }, [isMultiplayer, navigate, sendMessage]);
 
-  // Clock ticker — only runs when clockStarted is true
+  // Clock ticker
   useEffect(() => {
     if (gameOver || isPaused || !clockStarted) return;
     let timerId: number;
@@ -966,9 +942,11 @@ const StandardChessPage: React.FC<StandardChessPageProps> = ({
     return () => clearInterval(timer);
   }, [isMultiplayer, gameOver, sendMessage]);
 
-  // Save game when it ends (solo and multiplayer)
+  // ✅ Save game on end — SOLO ONLY
+  // Multiplayer is saved server-side via endGameAndSave() triggered by GAME_OVER message
   useEffect(() => {
     if (!gameOver || isSavingGame) return;
+    if (isMultiplayer) return;
     const saveGame = async () => {
       let result: "WIN" | "LOSS" | "DRAW" = "DRAW";
       let terminationReason = "DRAW";
@@ -989,7 +967,6 @@ const StandardChessPage: React.FC<StandardChessPageProps> = ({
     : "ChessMaster AI";
   const opponentColor = myColor === "white" ? "black" : "white";
 
-  // Clocks relative to board orientation
   const opponentClock = myColor === "white" ? blackTime : whiteTime;
   const myClock       = myColor === "white" ? whiteTime : blackTime;
 
@@ -1104,7 +1081,6 @@ const StandardChessPage: React.FC<StandardChessPageProps> = ({
           {/* LEFT COLUMN - BOARD */}
           <div className="chess-left-column">
 
-            {/* Opponent player card (shown above board in multiplayer) */}
             {isMultiplayer && (
               <div
                 className={`chess-player-card ${opponentClock <= 30 && clockStarted ? "low-time" : ""}`}
@@ -1172,7 +1148,6 @@ const StandardChessPage: React.FC<StandardChessPageProps> = ({
               </div>
             </div>
 
-            {/* My player card (shown below board in multiplayer) */}
             {isMultiplayer && (
               <div
                 className={`chess-player-card you-card ${myClock <= 30 && clockStarted ? "low-time" : ""}`}
@@ -1196,7 +1171,6 @@ const StandardChessPage: React.FC<StandardChessPageProps> = ({
               </div>
             )}
 
-            {/* Game Controls */}
             <div className="chess-controls-panel">
               {!isMultiplayer && (
                 <button
@@ -1227,7 +1201,6 @@ const StandardChessPage: React.FC<StandardChessPageProps> = ({
           {/* RIGHT COLUMN - INFO */}
           <div className="chess-right-column">
 
-            {/* Waiting overlay (multiplayer, not yet started) */}
             {isMultiplayer && !gameStartedRef.current && mpConnectionStatus !== "disconnected" && !gameOver && (
               <div
                 style={{
@@ -1261,7 +1234,6 @@ const StandardChessPage: React.FC<StandardChessPageProps> = ({
               </div>
             )}
 
-            {/* Draw offer banner (multiplayer only) */}
             {isMultiplayer && drawOfferReceived && (
               <div
                 style={{
@@ -1273,31 +1245,15 @@ const StandardChessPage: React.FC<StandardChessPageProps> = ({
                   textAlign: "center",
                 }}
               >
-                <p
-                  style={{
-                    color: "#ffd700",
-                    marginBottom: "12px",
-                    fontWeight: 600,
-                  }}
-                >
+                <p style={{ color: "#ffd700", marginBottom: "12px", fontWeight: 600 }}>
                   🤝 Opponent offers a draw
                 </p>
-                <div
-                  style={{
-                    display: "flex",
-                    gap: "8px",
-                    justifyContent: "center",
-                  }}
-                >
+                <div style={{ display: "flex", gap: "8px", justifyContent: "center" }}>
                   <button
                     onClick={handleAcceptDraw}
                     style={{
-                      background: "rgba(0,200,100,0.2)",
-                      border: "1px solid #00c864",
-                      color: "#00c864",
-                      padding: "8px 20px",
-                      borderRadius: "8px",
-                      cursor: "pointer",
+                      background: "rgba(0,200,100,0.2)", border: "1px solid #00c864",
+                      color: "#00c864", padding: "8px 20px", borderRadius: "8px", cursor: "pointer",
                     }}
                   >
                     ✓ Accept
@@ -1305,12 +1261,8 @@ const StandardChessPage: React.FC<StandardChessPageProps> = ({
                   <button
                     onClick={handleDeclineDraw}
                     style={{
-                      background: "rgba(255,80,80,0.2)",
-                      border: "1px solid #ff5050",
-                      color: "#ff5050",
-                      padding: "8px 20px",
-                      borderRadius: "8px",
-                      cursor: "pointer",
+                      background: "rgba(255,80,80,0.2)", border: "1px solid #ff5050",
+                      color: "#ff5050", padding: "8px 20px", borderRadius: "8px", cursor: "pointer",
                     }}
                   >
                     ✗ Decline
@@ -1319,7 +1271,6 @@ const StandardChessPage: React.FC<StandardChessPageProps> = ({
               </div>
             )}
 
-            {/* Game over banner (multiplayer) */}
             {isMultiplayer && gameOver && gameResult && (
               <div
                 style={{
@@ -1334,27 +1285,15 @@ const StandardChessPage: React.FC<StandardChessPageProps> = ({
                 <div style={{ fontSize: "2.5rem", marginBottom: "8px" }}>
                   {gameResult.toLowerCase().includes("win") ? "🏆" : gameResult.toLowerCase().includes("lose") ? "😞" : "🤝"}
                 </div>
-                <div
-                  style={{
-                    color: "#ffd700",
-                    fontSize: "1.2rem",
-                    fontWeight: 700,
-                    marginBottom: "16px",
-                  }}
-                >
+                <div style={{ color: "#ffd700", fontSize: "1.2rem", fontWeight: 700, marginBottom: "16px" }}>
                   {gameResult}
                 </div>
                 <button
                   onClick={() => navigate("/home")}
                   style={{
-                    background: "rgba(255,215,0,0.15)",
-                    border: "1px solid rgba(255,215,0,0.4)",
-                    color: "#ffd700",
-                    padding: "10px 24px",
-                    borderRadius: "8px",
-                    cursor: "pointer",
-                    fontSize: "0.95rem",
-                    fontWeight: 600,
+                    background: "rgba(255,215,0,0.15)", border: "1px solid rgba(255,215,0,0.4)",
+                    color: "#ffd700", padding: "10px 24px", borderRadius: "8px",
+                    cursor: "pointer", fontSize: "0.95rem", fontWeight: 600,
                   }}
                 >
                   Back to Home
@@ -1362,7 +1301,6 @@ const StandardChessPage: React.FC<StandardChessPageProps> = ({
               </div>
             )}
 
-            {/* Solo player cards */}
             {!isMultiplayer && (
               <>
                 <div className="chess-player-card ai-card">
@@ -1373,9 +1311,7 @@ const StandardChessPage: React.FC<StandardChessPageProps> = ({
                       <div className="player-rating">⭐ Rating: 1923</div>
                     </div>
                   </div>
-                  <div
-                    className={`player-clock ${blackTime <= 30 ? "low-time" : ""} ${blackTime <= 10 ? "critical-time" : ""}`}
-                  >
+                  <div className={`player-clock ${blackTime <= 30 ? "low-time" : ""} ${blackTime <= 10 ? "critical-time" : ""}`}>
                     {formatTime(blackTime)}
                   </div>
                 </div>
@@ -1387,16 +1323,13 @@ const StandardChessPage: React.FC<StandardChessPageProps> = ({
                       <div className="player-rating">⭐ Rating: 1847</div>
                     </div>
                   </div>
-                  <div
-                    className={`player-clock ${whiteTime <= 30 ? "low-time" : ""} ${whiteTime <= 10 ? "critical-time" : ""}`}
-                  >
+                  <div className={`player-clock ${whiteTime <= 30 ? "low-time" : ""} ${whiteTime <= 10 ? "critical-time" : ""}`}>
                     {formatTime(whiteTime)}
                   </div>
                 </div>
               </>
             )}
 
-            {/* Captured Pieces (solo only) */}
             {!isMultiplayer && (
               <div className="chess-captured-panel">
                 <div className="panel-header">
@@ -1406,9 +1339,7 @@ const StandardChessPage: React.FC<StandardChessPageProps> = ({
                   <div className="captured-label">White captured:</div>
                   <div className="captured-pieces">
                     {capturedPieces.black.length > 0
-                      ? capturedPieces.black.map((p, i) => (
-                          <span key={i} className="captured-piece">{p}</span>
-                        ))
+                      ? capturedPieces.black.map((p, i) => <span key={i} className="captured-piece">{p}</span>)
                       : <span className="captured-empty">None</span>}
                   </div>
                 </div>
@@ -1416,47 +1347,32 @@ const StandardChessPage: React.FC<StandardChessPageProps> = ({
                   <div className="captured-label">Black captured:</div>
                   <div className="captured-pieces">
                     {capturedPieces.white.length > 0
-                      ? capturedPieces.white.map((p, i) => (
-                          <span key={i} className="captured-piece">{p}</span>
-                        ))
+                      ? capturedPieces.white.map((p, i) => <span key={i} className="captured-piece">{p}</span>)
                       : <span className="captured-empty">None</span>}
                   </div>
                 </div>
               </div>
             )}
 
-            {/* Move History */}
             <div className="chess-move-history-card">
               <div className="panel-header">
                 <span>♟️ Move History</span>
-                <span className="move-count">
-                  {Math.ceil(moveHistory.length / 2)} moves
-                </span>
+                <span className="move-count">{Math.ceil(moveHistory.length / 2)} moves</span>
               </div>
               <div className="move-history-list">
                 {moveHistory.length === 0 && (
-                  <div className="chess-history-empty">
-                    Game moves will be recorded here.
+                  <div className="chess-history-empty">Game moves will be recorded here.</div>
+                )}
+                {Array.from({ length: Math.ceil(moveHistory.length / 2) }, (_, i) => (
+                  <div key={i} className="move-history-item">
+                    <span className="move-index">{i + 1}.</span>
+                    <span className="move-text white-move">{moveHistory[i * 2]}</span>
+                    <span className="move-text black-move">{moveHistory[i * 2 + 1] || ""}</span>
                   </div>
-                )}
-                {Array.from(
-                  { length: Math.ceil(moveHistory.length / 2) },
-                  (_, i) => (
-                    <div key={i} className="move-history-item">
-                      <span className="move-index">{i + 1}.</span>
-                      <span className="move-text white-move">
-                        {moveHistory[i * 2]}
-                      </span>
-                      <span className="move-text black-move">
-                        {moveHistory[i * 2 + 1] || ""}
-                      </span>
-                    </div>
-                  )
-                )}
+                ))}
               </div>
             </div>
 
-            {/* Game Status */}
             <div className="chess-status-strip">
               {gameOver ? (
                 <div className="status-game-over">

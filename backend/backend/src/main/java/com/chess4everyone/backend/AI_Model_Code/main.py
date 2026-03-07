@@ -1,24 +1,3 @@
-"""
-FastAPI Server — Chess4Everyone ML Analysis
-============================================
-Receives PGN games from the Java backend, runs Stockfish + XGBoost
-inference, and returns category-level skill predictions.
-
-POST /analyze-player
-  Request  → MLAnalysisRequest  (user_id, player_name, games[{pgn}])
-  Response → MLAnalysisResponse (predictions keyed by category name)
-
-The response shape MUST match what ChessMLAnalysisService.java expects:
-  predictions = {
-    "opening":         {classification, confidence, numeric_score},
-    "middlegame":      {classification, confidence, numeric_score},
-    "endgame":         {classification, confidence, numeric_score},
-    "tactical":        {classification, confidence, numeric_score},
-    "positional":      {classification, confidence, numeric_score},  ← mapped to MLPredictions.strategy
-    "time_management": {classification, confidence, numeric_score},  ← mapped to MLPredictions.timeManagement
-  }
-"""
-
 import logging
 import warnings
 from typing import Dict, List, Optional

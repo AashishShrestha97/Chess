@@ -44,7 +44,6 @@ declare global {
 }
 
 function parseVoiceMove(transcript: string, game: Chess): { from: string; to: string; promotion?: string } | null {
-  // Normalise
   const t = transcript
     .toLowerCase()
     .replace(/alpha/g, "a").replace(/bravo/g, "b").replace(/charlie/g, "c")
@@ -53,7 +52,6 @@ function parseVoiceMove(transcript: string, game: Chess): { from: string; to: st
     .replace(/\bto\b/g, " ").replace(/\bmoves\b/g, "").replace(/\b(move|takes|takes|captures|capture)\b/g, " ")
     .replace(/\s+/g, " ").trim();
 
-  // Try SAN directly (e.g. "e4", "Nf3", "O-O")
   try {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const move = game.move(t.replace(/\s/g, ""), { sloppy: true } as any);
@@ -63,7 +61,6 @@ function parseVoiceMove(transcript: string, game: Chess): { from: string; to: st
     }
   } catch { /* not valid SAN */ }
 
-  // Try "e2 e4" / "e two e four" patterns
   const rankWords: Record<string, string> = {
     one: "1", two: "2", three: "3", four: "4",
     five: "5", six: "6", seven: "7", eight: "8",
@@ -97,12 +94,10 @@ const VoiceGamePage: React.FC<VoiceGamePageProps> = ({
   const mpState = isMultiplayer ? (routeState as MultiplayerState) : null;
   const wsRef = useRef<WebSocket | null>(null);
 
-  // Use a ref for myColor so it's always fresh inside callbacks
   const myColorRef = useRef<"white" | "black">(mpState?.color ?? "white");
   const myColor = myColorRef.current;
 
-  const [effectiveTimeControl, setEffectiveTimeControl] =
-    useState<string>(timeControl);
+  const [effectiveTimeControl, setEffectiveTimeControl] = useState<string>(timeControl);
 
   const gameRef = useRef(new Chess());
   const [fen, setFen] = useState(gameRef.current.fen());
@@ -114,7 +109,6 @@ const VoiceGamePage: React.FC<VoiceGamePageProps> = ({
   );
   const [lastMove, setLastMove] = useState<{ from: string; to: string } | null>(null);
 
-  // Initialize clocks to 0 for multiplayer — they get set on GAME_START
   const [whiteTime, setWhiteTime] = useState(isMultiplayer ? 0 : 600);
   const [blackTime, setBlackTime] = useState(isMultiplayer ? 0 : 600);
   const [increment, setIncrement] = useState(0);
@@ -129,17 +123,14 @@ const VoiceGamePage: React.FC<VoiceGamePageProps> = ({
 
   const [boardWidth, setBoardWidth] = useState<number>(480);
 
-  // Multiplayer-specific UI
   const [drawOfferReceived, setDrawOfferReceived] = useState(false);
   const [gameResult, setGameResult] = useState<string | null>(null);
   const [mpConnectionStatus, setMpConnectionStatus] = useState<
     "connecting" | "waiting" | "playing" | "disconnected"
   >("connecting");
 
-  // clockStarted gate — clock only ticks after GAME_START is received
   const [clockStarted, setClockStarted] = useState(false);
   const clockStartedRef = useRef(false);
-  // gameStarted gate — prevents premature GAME_OVER processing
   const gameStartedRef = useRef(false);
 
   const gameOverRef = useRef(false);
@@ -147,31 +138,23 @@ const VoiceGamePage: React.FC<VoiceGamePageProps> = ({
   const incrementRef = useRef(0);
   const currentTurnRef = useRef<"w" | "b">("w");
 
-  // Keep refs in sync with state for use inside closures/intervals
   const whiteTimeRef = useRef(isMultiplayer ? 0 : 600);
   const blackTimeRef = useRef(isMultiplayer ? 0 : 600);
 
-  // Time warning flags
   const whiteTimeWarned30 = useRef(false);
   const whiteTimeWarned10 = useRef(false);
   const blackTimeWarned30 = useRef(false);
   const blackTimeWarned10 = useRef(false);
 
-  // Game recorder for saving game data (solo only)
   const gameRecorderRef = useRef<GameRecorder | null>(null);
   const [isSavingGame, setIsSavingGame] = useState(false);
 
-  const [, setCapturedPieces] = useState<{
-    white: string[];
-    black: string[];
-  }>({ white: [], black: [] });
-
+  const [, setCapturedPieces] = useState<{ white: string[]; black: string[] }>({ white: [], black: [] });
   const [boardOrientation, setBoardOrientation] = useState<"white" | "black">(myColor);
 
   // ── Voice recognition state ────────────────────────────────────────────────
   const [isListening, setIsListening] = useState(false);
   const [voiceTranscript, setVoiceTranscript] = useState("");
-  // Use ref for voiceStatus to avoid stale closure in recognition.onend
   const [voiceStatus, setVoiceStatus] = useState<"idle" | "listening" | "processing" | "error">("idle");
   const voiceStatusRef = useRef<"idle" | "listening" | "processing" | "error">("idle");
   const [voiceError, setVoiceError] = useState<string | null>(null);
@@ -186,7 +169,6 @@ const VoiceGamePage: React.FC<VoiceGamePageProps> = ({
   useEffect(() => { incrementRef.current = increment; }, [increment]);
   useEffect(() => { whiteTimeRef.current = whiteTime; }, [whiteTime]);
   useEffect(() => { blackTimeRef.current = blackTime; }, [blackTime]);
-  // Keep voiceStatusRef in sync
   useEffect(() => { voiceStatusRef.current = voiceStatus; }, [voiceStatus]);
 
   // Responsive board width
@@ -229,7 +211,7 @@ const VoiceGamePage: React.FC<VoiceGamePageProps> = ({
     setEffectiveTimeControl(tc || timeControl || "10+0");
   }, [routeState, timeControl]);
 
-  // Solo only — init clocks from time control. Multiplayer clocks are set in GAME_START.
+  // Solo only — init clocks
   useEffect(() => {
     if (isMultiplayer) return;
     const [mainPart, incStr] = effectiveTimeControl.split("+");
@@ -252,26 +234,22 @@ const VoiceGamePage: React.FC<VoiceGamePageProps> = ({
     blackTimeWarned10.current = false;
   }, [effectiveTimeControl, isMultiplayer]);
 
-  // Initialize game recorder (both solo and multiplayer)
   useEffect(() => {
+    if (isMultiplayer) return; // Don't re-init recorder during active multiplayer game
     gameRecorderRef.current = new GameRecorder(effectiveTimeControl);
-  }, [effectiveTimeControl]);
+  }, [effectiveTimeControl, isMultiplayer]);
 
-  // Initialize Stockfish AI (solo only)
   useEffect(() => {
     if (isMultiplayer) return;
     const initStockfish = async () => {
-      try {
-        await stockfishService.initialize();
-      } catch (error) {
-        console.error("❌ Failed to initialize Stockfish:", error);
-      }
+      try { await stockfishService.initialize(); }
+      catch (error) { console.error("❌ Failed to initialize Stockfish:", error); }
     };
     initStockfish();
     return () => { stockfishService.terminate(); };
   }, [isMultiplayer]);
 
-  // ── WebSocket send helper (defined early so other callbacks can use it) ──
+  // ── WebSocket send helper ──
   const sendMessage = useCallback((msg: object) => {
     if (wsRef.current?.readyState === WebSocket.OPEN) {
       wsRef.current.send(JSON.stringify(msg));
@@ -302,7 +280,6 @@ const VoiceGamePage: React.FC<VoiceGamePageProps> = ({
   }, []);
 
   // ---------- Flag / timeout ----------
-  // Use refs inside handleFlag to avoid stale closure issues in setInterval
   const handleFlag = useCallback((flagged: "white" | "black") => {
     if (gameOverRef.current) return;
     const winColor = flagged === "white" ? "Black" : "White";
@@ -332,9 +309,7 @@ const VoiceGamePage: React.FC<VoiceGamePageProps> = ({
     const game = gameRef.current;
     let move: Move | null = null;
     try {
-      move = typeof moveInput === "string"
-        ? game.move(moveInput)
-        : game.move(moveInput);
+      move = typeof moveInput === "string" ? game.move(moveInput) : game.move(moveInput);
     } catch { move = null; }
 
     if (!move) {
@@ -364,10 +339,8 @@ const VoiceGamePage: React.FC<VoiceGamePageProps> = ({
       });
     }
 
-    // Record move in game recorder (both solo and multiplayer)
     if (gameRecorderRef.current) {
       gameRecorderRef.current.recordMove(moveInput);
-      // Pass remaining time in ms using refs to get current values
       if (move.color === "w") gameRecorderRef.current.updateTime("black", blackTimeRef.current * 1000);
       else gameRecorderRef.current.updateTime("white", whiteTimeRef.current * 1000);
     }
@@ -379,7 +352,6 @@ const VoiceGamePage: React.FC<VoiceGamePageProps> = ({
 
     const sideToMove = game.turn();
 
-    // Apply increment
     if (incrementRef.current > 0) {
       if (sideToMove === "b") setWhiteTime((prev) => prev + incrementRef.current);
       else setBlackTime((prev) => prev + incrementRef.current);
@@ -410,18 +382,35 @@ const VoiceGamePage: React.FC<VoiceGamePageProps> = ({
       if (isMultiplayer) {
         const iWin = winColor.toLowerCase() === myColorRef.current;
         setGameResult(iWin ? "You win! by checkmate" : "You lose! by checkmate");
+        // ✅ Tell backend to save the game with moves_json
+        sendMessage({
+          type: "GAME_OVER",
+          winner: winColor.toLowerCase(),
+          reason: "Checkmate",
+          movesJson: gameRecorderRef.current?.getMovesAsJSON() ?? null,
+        });
       }
       playSound("gameEnd");
     } else if (game.isDraw()) {
       let msg = "Game drawn";
-      if (game.isStalemate()) msg = "Stalemate! Game drawn";
-      else if (game.isThreefoldRepetition()) msg = "Draw by threefold repetition";
-      else if (game.isInsufficientMaterial()) msg = "Draw by insufficient material";
+      let drawReason = "Draw";
+      if (game.isStalemate()) { msg = "Stalemate! Game drawn"; drawReason = "Stalemate"; }
+      else if (game.isThreefoldRepetition()) { msg = "Draw by threefold repetition"; drawReason = "Threefold repetition"; }
+      else if (game.isInsufficientMaterial()) { msg = "Draw by insufficient material"; drawReason = "Insufficient material"; }
       setGameOver(true);
       gameOverRef.current = true;
       setWinner(null);
       setStatusMessage(msg);
-      if (isMultiplayer) setGameResult("Draw!");
+      if (isMultiplayer) {
+        setGameResult("Draw!");
+        // ✅ Tell backend to save the game with moves_json
+        sendMessage({
+          type: "GAME_OVER",
+          winner: "draw",
+          reason: drawReason,
+          movesJson: gameRecorderRef.current?.getMovesAsJSON() ?? null,
+        });
+      }
       playSound("gameEnd");
     } else if (game.isCheck()) {
       setStatusMessage(
@@ -462,7 +451,6 @@ const VoiceGamePage: React.FC<VoiceGamePageProps> = ({
       switch (data.type) {
 
         case "WAITING_FOR_OPPONENT": {
-          console.log("⏳ Waiting for opponent...");
           setMpConnectionStatus("waiting");
           setStatusMessage("Waiting for opponent to connect...");
           break;
@@ -471,29 +459,20 @@ const VoiceGamePage: React.FC<VoiceGamePageProps> = ({
         case "GAME_START": {
           console.log("🚀 GAME_START received:", data);
 
-          // Parse time control from GAME_START message, fallback to mpState.timeControl
           let tc: string = (data.timeControl as string) || mpState?.timeControl || "10+0";
-          console.log("🕒 Time control from server:", tc);
-
-          // Handle encoded time control (may come as "10%2B0" from URL)
           tc = tc.replace("%2B", "+").replace("%2b", "+");
-
-          // UPDATE effectiveTimeControl state so it's used for saving the game
           setEffectiveTimeControl(tc);
-          console.log("✅ Setting effectiveTimeControl to:", tc);
+          
+          // ✅ Initialize fresh GameRecorder for multiplayer
+          gameRecorderRef.current = new GameRecorder(tc);
 
           const [mainPart, incStr] = tc.split("+");
           let minutes = Number(mainPart) || 10;
           let inc = Number(incStr) || 0;
-
-          // Validation: ensure positive values
           if (minutes <= 0) minutes = 10;
           if (inc < 0) inc = 0;
-
           const totalSecs = Math.max(60, minutes * 60);
-          console.log("🕐 Parsed time - Minutes:", minutes, "Increment:", inc, "Total Seconds:", totalSecs);
 
-          // Reset board to starting position
           gameRef.current = new Chess();
           setFen(gameRef.current.fen());
           setMoveHistory([]);
@@ -504,7 +483,6 @@ const VoiceGamePage: React.FC<VoiceGamePageProps> = ({
           setGameResult(null);
           gameOverRef.current = false;
 
-          // Set clocks from the server's time control
           setWhiteTime(totalSecs);
           setBlackTime(totalSecs);
           whiteTimeRef.current = totalSecs;
@@ -512,18 +490,14 @@ const VoiceGamePage: React.FC<VoiceGamePageProps> = ({
           setIncrement(inc);
           incrementRef.current = inc;
 
-          // Reset time warnings
           whiteTimeWarned30.current = false;
           whiteTimeWarned10.current = false;
           blackTimeWarned30.current = false;
           blackTimeWarned10.current = false;
 
-          // Set myColor correctly from server data
           const myColorFromServer = (data.myColor as "white" | "black") || mpState?.color || "white";
           myColorRef.current = myColorFromServer;
-          console.log("🎨 My color:", myColorFromServer);
 
-          // Start the clock
           clockStartedRef.current = true;
           setClockStarted(true);
           gameStartedRef.current = true;
@@ -568,10 +542,8 @@ const VoiceGamePage: React.FC<VoiceGamePageProps> = ({
                 });
               }
 
-              // Record opponent's move in game recorder (multiplayer)
               if (isMultiplayer && gameRecorderRef.current && move) {
                 gameRecorderRef.current.recordMove(move.san);
-                // Update time for the opponent who just moved
                 const movedColor = data.player as "white" | "black";
                 if (movedColor === "white") gameRecorderRef.current.updateTime("white", whiteTimeRef.current * 1000);
                 else gameRecorderRef.current.updateTime("black", blackTimeRef.current * 1000);
@@ -584,8 +556,7 @@ const VoiceGamePage: React.FC<VoiceGamePageProps> = ({
 
               const movedColor = data.player as "white" | "black";
               if (incrementRef.current > 0) {
-                if (movedColor === "white")
-                  setWhiteTime((p) => p + incrementRef.current);
+                if (movedColor === "white") setWhiteTime((p) => p + incrementRef.current);
                 else setBlackTime((p) => p + incrementRef.current);
               }
 
@@ -595,11 +566,23 @@ const VoiceGamePage: React.FC<VoiceGamePageProps> = ({
                 gameOverRef.current = true;
                 setGameResult(iWin ? "You win! by checkmate" : "You lose! by checkmate");
                 setStatusMessage("Checkmate!");
+                // ✅ Opponent's move caused checkmate — notify server to save
+                sendMessage({
+                  type: "GAME_OVER",
+                  winner: movedColor,
+                  reason: "Checkmate",
+                });
               } else if (game.isDraw()) {
                 setGameOver(true);
                 gameOverRef.current = true;
                 setGameResult("Draw!");
                 setStatusMessage("Game drawn");
+                // ✅ Notify server to save draw
+                sendMessage({
+                  type: "GAME_OVER",
+                  winner: "draw",
+                  reason: "Draw",
+                });
               } else if (game.isCheck()) {
                 setStatusMessage("Check!");
               } else {
@@ -614,12 +597,10 @@ const VoiceGamePage: React.FC<VoiceGamePageProps> = ({
         }
 
         case "GAME_OVER": {
-          // Ignore GAME_OVER if the game hasn't started yet (premature disconnect)
           if (!gameStartedRef.current) {
-            console.warn("⚠️ Ignoring GAME_OVER — game hasn't started yet. Game data:", data);
+            console.warn("⚠️ Ignoring GAME_OVER — game hasn't started yet.");
             break;
           }
-
           if (gameOverRef.current) {
             console.warn("⚠️ GAME_OVER already processed, ignoring duplicate");
             break;
@@ -630,7 +611,6 @@ const VoiceGamePage: React.FC<VoiceGamePageProps> = ({
 
           const winner = data.winner as string;
           const reason = (data.reason as string) || "Game over";
-          console.log("🏁 Game over - Winner:", winner, "Reason:", reason);
 
           if (winner === "draw" || data.result === "DRAW") {
             setGameResult(`Draw — ${reason.toLowerCase()}`);
@@ -655,11 +635,10 @@ const VoiceGamePage: React.FC<VoiceGamePageProps> = ({
         case "DRAW_DECLINED": {
           setStatusMessage("Draw offer declined");
           setTimeout(
-            () =>
-              setStatusMessage(
-                currentTurnRef.current === (myColorRef.current === "white" ? "w" : "b")
-                  ? "Your turn — speak your move!" : "Opponent's turn"
-              ),
+            () => setStatusMessage(
+              currentTurnRef.current === (myColorRef.current === "white" ? "w" : "b")
+                ? "Your turn — speak your move!" : "Opponent's turn"
+            ),
             2000
           );
           break;
@@ -673,7 +652,7 @@ const VoiceGamePage: React.FC<VoiceGamePageProps> = ({
       }
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [mpState?.timeControl, mpState?.color]
+    [mpState?.timeControl, mpState?.color, sendMessage]
   );
 
   // ── Multiplayer WebSocket ──────────────────────────────────────────────────
@@ -687,14 +666,12 @@ const VoiceGamePage: React.FC<VoiceGamePageProps> = ({
       if (!token || cancelled) return;
 
       const wsUrl = `ws://localhost:8080/api/game/${mpState.gameId}?token=${token}`;
-      console.log("🔌 Connecting to game WS:", wsUrl);
       const ws = new WebSocket(wsUrl);
       wsRef.current = ws;
       setMpConnectionStatus("connecting");
 
       ws.onopen = () => {
         if (cancelled) return;
-        console.log("🎮 Game WS connected");
         setMpConnectionStatus("waiting");
         setStatusMessage("Waiting for opponent...");
       };
@@ -703,7 +680,6 @@ const VoiceGamePage: React.FC<VoiceGamePageProps> = ({
         if (cancelled) return;
         try {
           const data = JSON.parse(event.data);
-          console.log("📨 Server message:", data.type, data);
           handleServerMessage(data);
         } catch (e) {
           console.error("Failed to parse WS message:", e);
@@ -716,7 +692,6 @@ const VoiceGamePage: React.FC<VoiceGamePageProps> = ({
       };
 
       ws.onclose = () => {
-        console.log("🔌 Game WS closed");
         if (!cancelled && !gameOverRef.current) {
           setMpConnectionStatus("disconnected");
           setStatusMessage("Connection lost");
@@ -732,7 +707,7 @@ const VoiceGamePage: React.FC<VoiceGamePageProps> = ({
     };
   }, [isMultiplayer, mpState?.gameId, handleServerMessage]);
 
-  // Auto-resign when player leaves (clicks back, closes tab, or goes offline)
+  // Auto-resign when player leaves
   useEffect(() => {
     if (!isMultiplayer) return;
 
@@ -743,7 +718,6 @@ const VoiceGamePage: React.FC<VoiceGamePageProps> = ({
     };
 
     const handlePopState = () => {
-      console.log("🔙 Back button pressed - auto resigning");
       if (gameStartedRef.current && !gameOverRef.current && wsRef.current?.readyState === WebSocket.OPEN) {
         sendMessage({ type: "RESIGN" });
       }
@@ -759,21 +733,19 @@ const VoiceGamePage: React.FC<VoiceGamePageProps> = ({
     };
   }, [isMultiplayer, sendMessage]);
 
-  // Timeout to detect if GAME_START isn't received (backend issue)
+  // Timeout to detect if GAME_START isn't received
   useEffect(() => {
     if (!isMultiplayer) return;
-
     const timeoutId = setTimeout(() => {
       if (!gameStartedRef.current && mpConnectionStatus === "waiting") {
-        console.warn("⚠️ GAME_START not received after 30 seconds - possible backend issue");
         setStatusMessage("⚠️ Game start delayed - checking server...");
       }
     }, 30000);
-
     return () => clearTimeout(timeoutId);
   }, [isMultiplayer, mpConnectionStatus]);
 
-  // Save completed game to database (both solo and multiplayer)
+  // Save completed game to database — SOLO ONLY
+  // Multiplayer games are saved by the backend WebSocket handler (endGameAndSave)
   const saveGameToDB = useCallback(async (result: "WIN" | "LOSS" | "DRAW", terminationReason: string) => {
     if (!gameRecorderRef.current) return;
     setIsSavingGame(true);
@@ -786,52 +758,25 @@ const VoiceGamePage: React.FC<VoiceGamePageProps> = ({
       }
       const movesJson = recorder.getMovesAsJSON();
       const gameStats = recorder.getGameStats();
-      
-      if (isMultiplayer && mpState) {
-        // Multiplayer game save
-        const whiteName = mpState.whitePlayer;
-        const blackName = mpState.blackPlayer;
-        const pgn = recorder.generatePGN(
-          whiteName, blackName, result,
-          effectiveTimeControl, "VOICE", terminationReason
-        );
-        // Estimate ratings from player data
-        const accuracy = 75 + Math.floor(Math.random() * 20);
-        await gameService.saveGame({
-          opponentName: myColor === "white" ? blackName : whiteName,
-          result, pgn, movesJson,
-          whiteRating: 1600, blackRating: 1600,
-          timeControl: effectiveTimeControl,
-          gameType: "VOICE" as const,
-          terminationReason,
-          moveCount: gameStats.moveCount,
-          totalTimeWhiteMs: gameStats.whiteTimeUsedMs,
-          totalTimeBlackMs: gameStats.blackTimeUsedMs,
-          accuracyPercentage: accuracy,
-          whitePlayerId: mpState.whitePlayerId,
-          blackPlayerId: mpState.blackPlayerId,
-          gameUuid: mpState.gameUuid,
-        });
-      } else {
-        // Solo AI game save
-        const pgn = recorder.generatePGN(
-          "You (White)", "ChessMaster AI", result,
-          effectiveTimeControl, "VOICE", terminationReason
-        );
-        const accuracy = 75 + Math.floor(Math.random() * 20);
-        await gameService.saveGame({
-          opponentName: "ChessMaster AI",
-          result, pgn, movesJson,
-          whiteRating: 1847, blackRating: 1923,
-          timeControl: effectiveTimeControl,
-          gameType: "VOICE" as const,
-          terminationReason,
-          moveCount: gameStats.moveCount,
-          totalTimeWhiteMs: gameStats.whiteTimeUsedMs,
-          totalTimeBlackMs: gameStats.blackTimeUsedMs,
-          accuracyPercentage: accuracy,
-        });
-      }
+
+      // Solo AI game save
+      const pgn = recorder.generatePGN(
+        "You (White)", "ChessMaster AI", result,
+        effectiveTimeControl, "VOICE", terminationReason
+      );
+      const accuracy = 75 + Math.floor(Math.random() * 20);
+      await gameService.saveGame({
+        opponentName: "ChessMaster AI",
+        result, pgn, movesJson,
+        whiteRating: 1847, blackRating: 1923,
+        timeControl: effectiveTimeControl,
+        gameType: "VOICE" as const,
+        terminationReason,
+        moveCount: gameStats.moveCount,
+        totalTimeWhiteMs: gameStats.whiteTimeUsedMs,
+        totalTimeBlackMs: gameStats.blackTimeUsedMs,
+        accuracyPercentage: accuracy,
+      });
       setStatusMessage("✅ Game saved! View in Past Games.");
     } catch (error) {
       console.error("❌ Failed to save game:", error);
@@ -839,7 +784,7 @@ const VoiceGamePage: React.FC<VoiceGamePageProps> = ({
     } finally {
       setIsSavingGame(false);
     }
-  }, [effectiveTimeControl, isMultiplayer, mpState, myColor]);
+  }, [effectiveTimeControl]);
 
   // Solo AI move
   const makeAIMove = useCallback(async () => {
@@ -980,7 +925,6 @@ const VoiceGamePage: React.FC<VoiceGamePageProps> = ({
 
   const handleBack = useCallback(() => {
     if (isMultiplayer && gameStartedRef.current && !gameOverRef.current) {
-      console.log("🔙 Going back - auto resigning");
       if (wsRef.current?.readyState === WebSocket.OPEN) {
         sendMessage({ type: "RESIGN" });
       }
@@ -999,7 +943,6 @@ const VoiceGamePage: React.FC<VoiceGamePageProps> = ({
     if (gameOverRef.current) return;
     if (isMultiplayer && !gameStartedRef.current) return;
 
-    // Check whose turn
     const myTurn = isMultiplayer
       ? gameRef.current.turn() === (myColorRef.current === "white" ? "w" : "b")
       : gameRef.current.turn() === "w";
@@ -1065,7 +1008,6 @@ const VoiceGamePage: React.FC<VoiceGamePageProps> = ({
 
     recognition.onend = () => {
       setIsListening(false);
-      // Use ref to get current voiceStatus without stale closure
       if (voiceStatusRef.current === "listening") {
         setVoiceStatus("idle");
         voiceStatusRef.current = "idle";
@@ -1085,7 +1027,7 @@ const VoiceGamePage: React.FC<VoiceGamePageProps> = ({
     voiceStatusRef.current = "idle";
   }, []);
 
-  // Clock ticker — only runs when clockStarted is true
+  // Clock ticker
   useEffect(() => {
     if (gameOver || isPaused || !clockStarted) return;
     let timerId: number;
@@ -1124,9 +1066,11 @@ const VoiceGamePage: React.FC<VoiceGamePageProps> = ({
     return () => clearInterval(timer);
   }, [isMultiplayer, gameOver, sendMessage]);
 
-  // Save game when it ends (solo and multiplayer)
+  // ✅ Save game on end — SOLO ONLY
+  // Multiplayer is saved server-side via endGameAndSave() triggered by GAME_OVER message
   useEffect(() => {
     if (!gameOver || isSavingGame) return;
+    if (isMultiplayer) return;
     const saveGame = async () => {
       let result: "WIN" | "LOSS" | "DRAW" = "DRAW";
       let terminationReason = "DRAW";
@@ -1142,9 +1086,7 @@ const VoiceGamePage: React.FC<VoiceGamePageProps> = ({
   }, [gameOver, isSavingGame, isMultiplayer, winner, statusMessage, saveGameToDB]);
 
   // ── Derived display values ────────────────────────────────────────────────
-  const opponentDisplayName = isMultiplayer
-    ? mpState?.opponentName || "Opponent"
-    : "ChessMaster AI";
+  const opponentDisplayName = isMultiplayer ? mpState?.opponentName || "Opponent" : "ChessMaster AI";
   const opponentColor = myColor === "white" ? "black" : "white";
 
   const opponentClock = myColor === "white" ? blackTime : whiteTime;
@@ -1175,17 +1117,13 @@ const VoiceGamePage: React.FC<VoiceGamePageProps> = ({
                 className="chess-top-badge"
                 style={{
                   background:
-                    mpConnectionStatus === "playing"
-                      ? "rgba(0,200,100,0.2)"
-                      : mpConnectionStatus === "waiting"
-                      ? "rgba(255,200,0,0.2)"
-                      : "rgba(255,80,80,0.2)",
+                    mpConnectionStatus === "playing" ? "rgba(0,200,100,0.2)"
+                    : mpConnectionStatus === "waiting" ? "rgba(255,200,0,0.2)"
+                    : "rgba(255,80,80,0.2)",
                   color:
-                    mpConnectionStatus === "playing"
-                      ? "#00c864"
-                      : mpConnectionStatus === "waiting"
-                      ? "#ffc800"
-                      : "#ff5050",
+                    mpConnectionStatus === "playing" ? "#00c864"
+                    : mpConnectionStatus === "waiting" ? "#ffc800"
+                    : "#ff5050",
                   border: `1px solid currentColor`,
                   padding: "4px 12px",
                   borderRadius: "20px",
@@ -1193,12 +1131,9 @@ const VoiceGamePage: React.FC<VoiceGamePageProps> = ({
                   fontWeight: 600,
                 }}
               >
-                {mpConnectionStatus === "playing"
-                  ? "● Live"
-                  : mpConnectionStatus === "waiting"
-                  ? "⏳ Waiting for opponent"
-                  : mpConnectionStatus === "connecting"
-                  ? "⟳ Connecting"
+                {mpConnectionStatus === "playing" ? "● Live"
+                  : mpConnectionStatus === "waiting" ? "⏳ Waiting for opponent"
+                  : mpConnectionStatus === "connecting" ? "⟳ Connecting"
                   : "✕ Disconnected"}
               </span>
               <span style={{ color: "#888", fontSize: "0.85rem" }}>
@@ -1215,9 +1150,7 @@ const VoiceGamePage: React.FC<VoiceGamePageProps> = ({
               <span className="chess-top-title">
                 {isMultiplayer ? "Multiplayer Voice Chess" : "Voice Chess Game"}
               </span>
-              <span className="chess-top-badge">
-                {isMultiplayer ? "VS Player" : "VS AI"}
-              </span>
+              <span className="chess-top-badge">{isMultiplayer ? "VS Player" : "VS AI"}</span>
               <span className="chess-top-badge" style={{ background: "rgba(100,100,255,0.2)", color: "#aaf" }}>
                 🎤 Voice Mode
               </span>
@@ -1226,16 +1159,14 @@ const VoiceGamePage: React.FC<VoiceGamePageProps> = ({
               {isMultiplayer ? (
                 <>
                   You are playing as{" "}
-                  <strong style={{ color: myColor === "white" ? "#fff" : "#aaa" }}>
-                    {myColor}
-                  </strong>{" "}
-                  — {statusMessage}
+                  <strong style={{ color: myColor === "white" ? "#fff" : "#aaa" }}>{myColor}</strong>
+                  {" "}— {statusMessage}
                 </>
               ) : (
                 <>
                   Time Control:{" "}
-                  <span className="chess-top-subtitle-strong">{effectiveTimeControl}</span>{" "}
-                  | Speak moves like "e2 e4" or drag pieces
+                  <span className="chess-top-subtitle-strong">{effectiveTimeControl}</span>
+                  {" "}| Speak moves like "e2 e4" or drag pieces
                 </>
               )}
             </div>
@@ -1243,17 +1174,10 @@ const VoiceGamePage: React.FC<VoiceGamePageProps> = ({
           <div className="chess-top-right">
             {!isMultiplayer && (
               <>
-                <button
-                  className="chess-top-button"
-                  onClick={() => setIsPaused((p) => !p)}
-                  disabled={gameOver}
-                >
+                <button className="chess-top-button" onClick={() => setIsPaused((p) => !p)} disabled={gameOver}>
                   {isPaused ? "▶ Resume Game" : "⏸ Pause Game"}
                 </button>
-                <button
-                  className="chess-top-button secondary"
-                  onClick={handleNewGame}
-                >
+                <button className="chess-top-button secondary" onClick={handleNewGame}>
                   🔄 New Game
                 </button>
               </>
@@ -1265,21 +1189,16 @@ const VoiceGamePage: React.FC<VoiceGamePageProps> = ({
           {/* LEFT COLUMN - BOARD */}
           <div className="chess-left-column">
 
-            {/* Opponent player card */}
             {isMultiplayer && (
               <div
                 className={`chess-player-card ${opponentClock <= 30 && clockStarted ? "low-time" : ""}`}
                 style={{ marginBottom: "8px" }}
               >
                 <div className="player-left">
-                  <div className="player-avatar ai">
-                    {opponentDisplayName[0]?.toUpperCase() || "?"}
-                  </div>
+                  <div className="player-avatar ai">{opponentDisplayName[0]?.toUpperCase() || "?"}</div>
                   <div>
                     <div className="player-name">{opponentDisplayName}</div>
-                    <div className="player-rating">
-                      {opponentColor === "black" ? "⬛ Black" : "⬜ White"}
-                    </div>
+                    <div className="player-rating">{opponentColor === "black" ? "⬛ Black" : "⬜ White"}</div>
                   </div>
                 </div>
                 <div
@@ -1304,34 +1223,21 @@ const VoiceGamePage: React.FC<VoiceGamePageProps> = ({
                   boxShadow: "0 20px 60px rgba(0,0,0,0.9)",
                 }}
               />
-
               <div className="chess-board-footer">
                 {!isMultiplayer && (
-                  <button
-                    className="chess-small-btn"
-                    onClick={() =>
-                      setBoardOrientation((p) => p === "white" ? "black" : "white")
-                    }
-                  >
+                  <button className="chess-small-btn" onClick={() => setBoardOrientation((p) => p === "white" ? "black" : "white")}>
                     🔄 Flip Board
                   </button>
                 )}
-                <button
-                  className="chess-small-btn"
-                  onClick={() => setShowLegalMoves((p) => !p)}
-                >
+                <button className="chess-small-btn" onClick={() => setShowLegalMoves((p) => !p)}>
                   {showLegalMoves ? "👁 Hide Hints" : "👁 Show Hints"}
                 </button>
-                <button
-                  className="chess-small-btn"
-                  onClick={() => setIsSoundOn((p) => !p)}
-                >
+                <button className="chess-small-btn" onClick={() => setIsSoundOn((p) => !p)}>
                   {isSoundOn ? "🔊 Sound On" : "🔇 Sound Off"}
                 </button>
               </div>
             </div>
 
-            {/* My player card */}
             {isMultiplayer && (
               <div
                 className={`chess-player-card you-card ${myClock <= 30 && clockStarted ? "low-time" : ""}`}
@@ -1341,9 +1247,7 @@ const VoiceGamePage: React.FC<VoiceGamePageProps> = ({
                   <div className="player-avatar you">Y</div>
                   <div>
                     <div className="player-name">You</div>
-                    <div className="player-rating">
-                      {myColor === "white" ? "⬜ White" : "⬛ Black"}
-                    </div>
+                    <div className="player-rating">{myColor === "white" ? "⬜ White" : "⬛ Black"}</div>
                   </div>
                 </div>
                 <div
@@ -1355,34 +1259,20 @@ const VoiceGamePage: React.FC<VoiceGamePageProps> = ({
               </div>
             )}
 
-            {/* Game Controls */}
             <div className="chess-controls-panel">
               {!isMultiplayer && (
-                <button
-                  className="chess-control-btn"
-                  onClick={handleUndo}
-                  disabled={gameOver || moveHistory.length < 2}
-                >
+                <button className="chess-control-btn" onClick={handleUndo} disabled={gameOver || moveHistory.length < 2}>
                   ↩️ Undo Move
                 </button>
               )}
-              <button
-                className="chess-control-btn"
-                onClick={handleOfferDraw}
-                disabled={gameOver || (isMultiplayer && !gameStartedRef.current)}
-              >
+              <button className="chess-control-btn" onClick={handleOfferDraw} disabled={gameOver || (isMultiplayer && !gameStartedRef.current)}>
                 🤝 Offer Draw
               </button>
-              <button
-                className="chess-control-btn danger"
-                onClick={handleResign}
-                disabled={gameOver || (isMultiplayer && !gameStartedRef.current)}
-              >
+              <button className="chess-control-btn danger" onClick={handleResign} disabled={gameOver || (isMultiplayer && !gameStartedRef.current)}>
                 🏳️ Resign
               </button>
             </div>
 
-            {/* Draw offer banner */}
             {drawOfferReceived && (
               <div className="draw-offer-banner">
                 <span>🤝 Opponent offers a draw</span>
@@ -1410,15 +1300,11 @@ const VoiceGamePage: React.FC<VoiceGamePageProps> = ({
                 disabled={!voiceSupportedRef.current || gameOver || (isMultiplayer && !isMyTurn)}
               >
                 {isListening ? (
-                  <>
-                    <span className="voice-pulse" /> Stop Listening
-                  </>
+                  <><span className="voice-pulse" /> Stop Listening</>
                 ) : voiceStatus === "processing" ? (
                   "⏳ Processing..."
                 ) : (
-                  <>
-                    🎤 {isMyTurn ? "Speak Move" : "Not Your Turn"}
-                  </>
+                  <>🎤 {isMyTurn ? "Speak Move" : "Not Your Turn"}</>
                 )}
               </button>
 
@@ -1429,9 +1315,7 @@ const VoiceGamePage: React.FC<VoiceGamePageProps> = ({
                 </div>
               )}
 
-              {voiceError && (
-                <div className="voice-error">{voiceError}</div>
-              )}
+              {voiceError && <div className="voice-error">{voiceError}</div>}
 
               <div className="voice-help">
                 <div className="voice-help-title">How to speak moves:</div>
@@ -1444,50 +1328,30 @@ const VoiceGamePage: React.FC<VoiceGamePageProps> = ({
             {/* Clocks panel for solo mode */}
             {!isMultiplayer && (
               <div className="chess-clocks-panel">
-                <div
-                  className={`clock-item ${currentTurn === "b" && clockStarted ? "active-clock" : ""} ${blackTime <= 30 && clockStarted ? "low-time" : ""}`}
-                >
+                <div className={`clock-item ${currentTurn === "b" && clockStarted ? "active-clock" : ""} ${blackTime <= 30 && clockStarted ? "low-time" : ""}`}>
                   <span className="clock-label">⬛ Black</span>
                   <span className="clock-value">{formatTime(blackTime)}</span>
                 </div>
                 <div className="clock-divider" />
-                <div
-                  className={`clock-item ${currentTurn === "w" && clockStarted ? "active-clock" : ""} ${whiteTime <= 30 && clockStarted ? "low-time" : ""}`}
-                >
+                <div className={`clock-item ${currentTurn === "w" && clockStarted ? "active-clock" : ""} ${whiteTime <= 30 && clockStarted ? "low-time" : ""}`}>
                   <span className="clock-label">⬜ White</span>
                   <span className="clock-value">{formatTime(whiteTime)}</span>
                 </div>
               </div>
             )}
 
-            {/* Waiting overlay (multiplayer, not yet started) */}
             {isMultiplayer && !gameStartedRef.current && mpConnectionStatus !== "disconnected" && !gameOver && (
-              <div
-                style={{
-                  background: "rgba(255,215,0,0.08)",
-                  border: "1px solid rgba(255,215,0,0.25)",
-                  borderRadius: "16px",
-                  padding: "24px",
-                  marginBottom: "16px",
-                  textAlign: "center",
-                }}
-              >
+              <div style={{ background: "rgba(255,215,0,0.08)", border: "1px solid rgba(255,215,0,0.25)", borderRadius: "16px", padding: "24px", marginBottom: "16px", textAlign: "center" }}>
                 <div style={{ fontSize: "2rem", marginBottom: "8px" }}>⏳</div>
                 <div style={{ color: "#ffd700", fontSize: "1rem", fontWeight: 600, marginBottom: "8px" }}>
-                  {mpConnectionStatus === "waiting"
-                    ? "Waiting for opponent to connect..."
-                    : "Connecting to game server..."}
+                  {mpConnectionStatus === "waiting" ? "Waiting for opponent to connect..." : "Connecting to game server..."}
                 </div>
                 <div style={{ color: "#888", fontSize: "0.85rem" }}>
-                  You are playing as{" "}
-                  <strong style={{ color: myColor === "white" ? "#fff" : "#ccc" }}>
-                    {myColor}
-                  </strong>
+                  You are playing as <strong style={{ color: myColor === "white" ? "#fff" : "#ccc" }}>{myColor}</strong>
                 </div>
               </div>
             )}
 
-            {/* Game Over result panel */}
             {gameOver && (
               <div className="chess-result-card">
                 <div className="result-emoji">
@@ -1496,60 +1360,40 @@ const VoiceGamePage: React.FC<VoiceGamePageProps> = ({
                 <div className="result-title">
                   {isMultiplayer
                     ? gameResult || "Game Over"
-                    : winner
-                    ? `🏆 ${winner} wins!`
-                    : "🤝 Game drawn"}
+                    : winner ? `🏆 ${winner} wins!` : "🤝 Game drawn"}
                 </div>
-                <button
-                  className="result-home-btn"
-                  onClick={() => navigate("/home")}
-                >
+                <button className="result-home-btn" onClick={() => navigate("/home")}>
                   Back to Home
                 </button>
               </div>
             )}
 
-            {/* Move History */}
             <div className="chess-history-panel">
               <div className="chess-history-header">
                 <span>♟ Move History</span>
-                <span className="chess-history-count">
-                  {Math.ceil(moveHistory.length / 2)} moves
-                </span>
+                <span className="chess-history-count">{Math.ceil(moveHistory.length / 2)} moves</span>
               </div>
               <div className="move-history-list">
                 {moveHistory.length === 0 && (
-                  <div className="chess-history-empty">
-                    Game moves will be recorded here.
+                  <div className="chess-history-empty">Game moves will be recorded here.</div>
+                )}
+                {Array.from({ length: Math.ceil(moveHistory.length / 2) }, (_, i) => (
+                  <div key={i} className="move-history-item">
+                    <span className="move-index">{i + 1}.</span>
+                    <span className="move-text white-move">{moveHistory[i * 2]}</span>
+                    <span className="move-text black-move">{moveHistory[i * 2 + 1] || ""}</span>
                   </div>
-                )}
-                {Array.from(
-                  { length: Math.ceil(moveHistory.length / 2) },
-                  (_, i) => (
-                    <div key={i} className="move-history-item">
-                      <span className="move-index">{i + 1}.</span>
-                      <span className="move-text white-move">{moveHistory[i * 2]}</span>
-                      <span className="move-text black-move">{moveHistory[i * 2 + 1] || ""}</span>
-                    </div>
-                  )
-                )}
+                ))}
               </div>
             </div>
 
-            {/* Game Status */}
             <div className="chess-status-strip">
               {gameOver ? (
                 <div className="status-game-over">
-                  {isMultiplayer
-                    ? gameResult || "Game over"
-                    : winner
-                    ? `🏆 ${winner} wins!`
-                    : "🤝 Game drawn"}
+                  {isMultiplayer ? gameResult || "Game over" : winner ? `🏆 ${winner} wins!` : "🤝 Game drawn"}
                 </div>
               ) : (
-                <div className="status-active">
-                  {isPaused ? "⏸ Game Paused" : statusMessage}
-                </div>
+                <div className="status-active">{isPaused ? "⏸ Game Paused" : statusMessage}</div>
               )}
             </div>
           </div>

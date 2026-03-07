@@ -1,14 +1,3 @@
-"""
-Chess Game Analyzer using Stockfish - ULTRA DETERMINISTIC VERSION
-==================================================================
-Maximum determinism fixes:
-1. Fixed depth priority (depth ONLY, no time limit during search)
-2. Single-threaded enforcement
-3. Deterministic hash configuration
-4. Consistent rounding at every step
-5. Position cache to ensure same positions get same evals
-"""
-
 import chess
 import chess.pgn
 import chess.engine
