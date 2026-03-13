@@ -9,7 +9,7 @@ interface MatchmakingState {
 
 interface GameFoundMessage {
   type: "GAME_FOUND";
-  gameId: number;        // DB Long ID — used in WS path /api/game/{gameId}
+  gameId: number;
   gameUuid: string;
   color: "white" | "black";
   timeControl: string;
@@ -25,7 +25,6 @@ const MatchmakingPage: React.FC = () => {
   const navigate = useNavigate();
   const state = location.state as MatchmakingState | null;
 
-  // Both values come from HomePage — never show a setup UI here
   const timeControl = state?.timeControl ?? "10+0";
   const gameType    = state?.gameType    ?? "STANDARD";
 
@@ -40,7 +39,6 @@ const MatchmakingPage: React.FC = () => {
     return () => clearInterval(id);
   }, []);
 
-  // Connect to matchmaking WS immediately on mount (state already set by HomePage)
   useEffect(() => {
     cancelledRef.current = false;
 
@@ -48,7 +46,6 @@ const MatchmakingPage: React.FC = () => {
       const token = await getAccessToken();
       if (!token) { setStatus("error"); return; }
 
-      // encodeURIComponent so "10+0" becomes "10%2B0" — the "+" must not be sent raw
       const encodedTC = encodeURIComponent(timeControl);
       const wsUrl = `ws://localhost:8080/api/matchmaking?token=${token}&timeControl=${encodedTC}&gameType=${gameType}`;
 
@@ -75,15 +72,16 @@ const MatchmakingPage: React.FC = () => {
             const msg = data as GameFoundMessage;
             setStatus("found");
 
-            // Route to VoiceGamePage or StandardChessPage based on gameType
+            // ✅ FIXED: Route to /voicechess for VOICE, /classicchess for STANDARD
+            // Both are now handled directly (no /multiplayer suffix needed)
             const route = msg.gameType === "VOICE"
-              ? "/voicechess/multiplayer"
-              : "/classicchess/multiplayer";
+              ? "/voicechess"
+              : "/classicchess";
 
             setTimeout(() => {
               navigate(route, {
                 state: {
-                  gameId:        msg.gameId,      // Long DB id — used for WS /api/game/{gameId}
+                  gameId:        msg.gameId,
                   gameUuid:      msg.gameUuid,
                   color:         msg.color,
                   timeControl:   msg.timeControl,
@@ -95,7 +93,7 @@ const MatchmakingPage: React.FC = () => {
                   blackPlayerId: msg.blackPlayerId,
                 },
               });
-            }, 800); // Short delay so "Match Found!" flashes before navigation
+            }, 800);
           }
         } catch (e) {
           console.error("Matchmaking parse error:", e);
@@ -122,7 +120,7 @@ const MatchmakingPage: React.FC = () => {
       cancelledRef.current = true;
       wsRef.current?.close();
     };
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps — intentionally runs once
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleCancel = () => {
     cancelledRef.current = true;
@@ -169,7 +167,6 @@ const MatchmakingPage: React.FC = () => {
         boxShadow: "0 32px 80px rgba(0,0,0,0.8)",
       }}>
 
-        {/* Icon */}
         <div style={{
           fontSize: "4rem", marginBottom: "24px",
           display: "inline-block",
@@ -190,7 +187,6 @@ const MatchmakingPage: React.FC = () => {
           {statusText}
         </p>
 
-        {/* Game info pills */}
         <div style={{
           display: "flex", gap: "10px", justifyContent: "center",
           flexWrap: "wrap", marginBottom: "32px",
@@ -209,7 +205,6 @@ const MatchmakingPage: React.FC = () => {
           </div>
         </div>
 
-        {/* Pulsing dots while searching */}
         {status === "waiting" && (
           <div style={{ display: "flex", justifyContent: "center", gap: "8px", marginBottom: "32px" }}>
             {[0, 1, 2, 3, 4].map(i => (
@@ -223,7 +218,6 @@ const MatchmakingPage: React.FC = () => {
           </div>
         )}
 
-        {/* Error box */}
         {status === "error" && (
           <div style={{
             background: "rgba(255,80,80,0.1)", border: "1px solid rgba(255,80,80,0.3)",
@@ -234,7 +228,6 @@ const MatchmakingPage: React.FC = () => {
           </div>
         )}
 
-        {/* Cancel button */}
         {status !== "found" && (
           <button
             onClick={handleCancel}

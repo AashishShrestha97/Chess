@@ -19,7 +19,7 @@ import VoiceGamePage from "./pages/VoiceGamePage";
 import StandardChessPage from "./pages/StandardChessPage";
 import SettingsPage from "./pages/SettingsPage";
 import MatchmakingPage from "./pages/MatchmakingPage";
-import MultiplayerChessPage from "./pages/MultiplayerChessPage";
+// MultiplayerChessPage import removed — no longer needed
 
 const App: React.FC = () => {
   return (
@@ -34,17 +34,24 @@ const App: React.FC = () => {
         <Route path="/home" element={<ProtectedRoute><HomePage /></ProtectedRoute>} />
         <Route path="/profile" element={<ProtectedRoute><ProfilePage /></ProtectedRoute>} />
         <Route path="/admin" element={<ProtectedRoute><AdminPage /></ProtectedRoute>} />
-        <Route path="/voicechess" element={<ProtectedRoute><VoiceGamePage /></ProtectedRoute>} />
-        <Route path="/classicchess" element={<ProtectedRoute><StandardChessPage /></ProtectedRoute>} />
         <Route path="/settings" element={<ProtectedRoute><SettingsPage /></ProtectedRoute>} />
         <Route path="/game-history" element={<ProtectedRoute><GameHistoryPage /></ProtectedRoute>} />
         <Route path="/game-review/:gameId" element={<ProtectedRoute><GameReviewPage /></ProtectedRoute>} />
         <Route path="/rankings" element={<ProtectedRoute><RankingsPage /></ProtectedRoute>} />
 
-        {/* Multiplayer routes */}
+        {/* Matchmaking — navigates to /voicechess or /classicchess on match found */}
         <Route path="/matchmaking" element={<ProtectedRoute><MatchmakingPage /></ProtectedRoute>} />
-        <Route path="/classicchess/multiplayer" element={<ProtectedRoute><MultiplayerChessPage /></ProtectedRoute>} />
-        <Route path="/voicechess/multiplayer" element={<ProtectedRoute><MultiplayerChessPage /></ProtectedRoute>} />
+
+        {/*
+          /classicchess and /voicechess handle BOTH solo AND multiplayer games.
+          When coming from matchmaking, location.state contains:
+            { gameId, gameUuid, color, timeControl, gameType, opponentName, ... }
+          Both pages check for gameId in state to detect multiplayer mode.
+          The old /classicchess/multiplayer and /voicechess/multiplayer routes
+          are removed — MatchmakingPage now routes directly here.
+        */}
+        <Route path="/classicchess" element={<ProtectedRoute><StandardChessPage /></ProtectedRoute>} />
+        <Route path="/voicechess"   element={<ProtectedRoute><VoiceGamePage /></ProtectedRoute>} />
       </Routes>
     </BrowserRouter>
   );
