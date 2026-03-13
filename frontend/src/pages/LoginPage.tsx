@@ -4,6 +4,10 @@ import LoginLeft from "../components/Auth/Login/LoginLeft";
 import LoginForm from "../components/Auth/Login/LoginForm";
 
 const LoginPage: React.FC = () => {
+  useEffect(() => {
+    document.body.setAttribute("data-public-page", "true");
+    return () => document.body.removeAttribute("data-public-page");
+  }, []);
   // enable fade-up on scroll and mount
   useEffect(() => {
     const obs = new IntersectionObserver(

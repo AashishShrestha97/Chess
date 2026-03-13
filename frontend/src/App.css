@@ -60,7 +60,7 @@ body.dark-theme {
     color: var(--text);
 }
 
-/* Page-level light theme overrides so every screen respects light mode */
+/* Page-level light theme overrides (Landing, Login, SignIn are excluded - always dark) */
 body.light-theme .home-page,
 body.light-theme .rankings-page,
 body.light-theme .settings-page,
@@ -71,86 +71,117 @@ body.light-theme .mp-chess-page,
 body.light-theme .game-history-page,
 body.light-theme .gr-page,
 body.light-theme .matchmaking-page,
-body.light-theme .admin-page,
-body.light-theme .login-wrap,
-body.light-theme .signin-wrap {
+body.light-theme .admin-page {
     background: #f5f5f5;
     color: #111111;
 }
 
+/* Public pages (Landing, Login, SignIn): always dark, ignore light-theme */
+body.light-theme[data-public-page="true"] {
+    background: #0a0a0a !important;
+    color: #ffffff !important;
+    /* Force dark-theme variables so text stays light */
+    --text-primary: #ffffff !important;
+    --text-secondary: #b8b8b8 !important;
+    --text-muted: #888888 !important;
+    --bg-primary: #0a0a0a !important;
+    --bg-card: #1a1a1a !important;
+    --text: #ffffff !important;
+}
+body.light-theme[data-public-page="true"] .login-wrap,
+body.light-theme[data-public-page="true"] .signin-wrap {
+    background: #000000 !important;
+    color: #ffffff !important;
+}
+/* Public pages: headings and main text must stay light on dark bg */
+body.light-theme[data-public-page="true"] h1,
+body.light-theme[data-public-page="true"] h2,
+body.light-theme[data-public-page="true"] h3,
+body.light-theme[data-public-page="true"] .title,
+body.light-theme[data-public-page="true"] .label {
+    color: #ffffff !important;
+}
+body.light-theme[data-public-page="true"] .subtitle,
+body.light-theme[data-public-page="true"] .footnote {
+    color: #b8b8b8 !important;
+}
+body.light-theme[data-public-page="true"] .divider .text {
+    color: #888888 !important;
+}
+
 /* Light mode: common “card / panel” surfaces across pages */
-body.light-theme .panel,
-body.light-theme .stat-card,
-body.light-theme .modal-card,
-body.light-theme .settings-body,
-body.light-theme .profile-section,
-body.light-theme .gh-games-card,
-body.light-theme .gh-detail-card,
-body.light-theme .gh-analysis-card,
-body.light-theme .gr-board-card,
-body.light-theme .gr-moves-card,
-body.light-theme .gr-info-card,
-body.light-theme .gr-move-analysis-card,
-body.light-theme .gr-stats-card,
-body.light-theme .rankings-table-card,
-body.light-theme .podium-card,
-body.light-theme .matchmaking-card,
-body.light-theme .mp-player-card,
-body.light-theme .mp-move-history,
-body.light-theme .mp-game-over-card {
+body.light-theme:not([data-public-page="true"]) .panel,
+body.light-theme:not([data-public-page="true"]) .stat-card,
+body.light-theme:not([data-public-page="true"]) .modal-card,
+body.light-theme:not([data-public-page="true"]) .settings-body,
+body.light-theme:not([data-public-page="true"]) .profile-section,
+body.light-theme:not([data-public-page="true"]) .gh-games-card,
+body.light-theme:not([data-public-page="true"]) .gh-detail-card,
+body.light-theme:not([data-public-page="true"]) .gh-analysis-card,
+body.light-theme:not([data-public-page="true"]) .gr-board-card,
+body.light-theme:not([data-public-page="true"]) .gr-moves-card,
+body.light-theme:not([data-public-page="true"]) .gr-info-card,
+body.light-theme:not([data-public-page="true"]) .gr-move-analysis-card,
+body.light-theme:not([data-public-page="true"]) .gr-stats-card,
+body.light-theme:not([data-public-page="true"]) .rankings-table-card,
+body.light-theme:not([data-public-page="true"]) .podium-card,
+body.light-theme:not([data-public-page="true"]) .matchmaking-card,
+body.light-theme:not([data-public-page="true"]) .mp-player-card,
+body.light-theme:not([data-public-page="true"]) .mp-move-history,
+body.light-theme:not([data-public-page="true"]) .mp-game-over-card {
     background: #ffffff !important;
     border-color: rgba(0, 0, 0, 0.10) !important;
     color: #111111 !important;
     box-shadow: 0 12px 36px rgba(0, 0, 0, 0.10) !important;
 }
 
-/* Light mode: inputs/search bars should be light, readable */
-body.light-theme input,
-body.light-theme select,
-body.light-theme textarea,
-body.light-theme .rankings-search,
-body.light-theme .setting-input,
-body.light-theme .setting-select,
-body.light-theme .modal-input {
+/* Light mode: inputs/search bars (exclude public pages) */
+body.light-theme:not([data-public-page="true"]) input,
+body.light-theme:not([data-public-page="true"]) select,
+body.light-theme:not([data-public-page="true"]) textarea,
+body.light-theme:not([data-public-page="true"]) .rankings-search,
+body.light-theme:not([data-public-page="true"]) .setting-input,
+body.light-theme:not([data-public-page="true"]) .setting-select,
+body.light-theme:not([data-public-page="true"]) .modal-input {
     background: #ffffff !important;
     color: #111111 !important;
     border-color: rgba(0, 0, 0, 0.15) !important;
 }
 
-body.light-theme input::placeholder,
-body.light-theme textarea::placeholder {
+body.light-theme:not([data-public-page="true"]) input::placeholder,
+body.light-theme:not([data-public-page="true"]) textarea::placeholder {
     color: #777777 !important;
 }
 
-/* Light mode: headings/text that are hard-coded white in page CSS */
-body.light-theme h1,
-body.light-theme h2,
-body.light-theme h3,
-body.light-theme h4,
-body.light-theme h5,
-body.light-theme h6,
-body.light-theme .page-title,
-body.light-theme .rankings-title,
-body.light-theme .gh-title,
-body.light-theme .gr-title {
+/* Light mode: headings (exclude public pages - they stay light text on dark) */
+body.light-theme:not([data-public-page="true"]) h1,
+body.light-theme:not([data-public-page="true"]) h2,
+body.light-theme:not([data-public-page="true"]) h3,
+body.light-theme:not([data-public-page="true"]) h4,
+body.light-theme:not([data-public-page="true"]) h5,
+body.light-theme:not([data-public-page="true"]) h6,
+body.light-theme:not([data-public-page="true"]) .page-title,
+body.light-theme:not([data-public-page="true"]) .rankings-title,
+body.light-theme:not([data-public-page="true"]) .gh-title,
+body.light-theme:not([data-public-page="true"]) .gr-title {
     color: #111111 !important;
 }
 
-/* Light mode: reduce dark overlays used in some pages */
-body.light-theme .settings-tabs {
+/* Light mode: tabs (exclude public pages) */
+body.light-theme:not([data-public-page="true"]) .settings-tabs {
     border-bottom-color: rgba(0, 0, 0, 0.10) !important;
 }
 
-body.light-theme .tab-btn {
+body.light-theme:not([data-public-page="true"]) .tab-btn {
     color: #333333 !important;
 }
 
-body.light-theme .tab-btn:hover {
+body.light-theme:not([data-public-page="true"]) .tab-btn:hover {
     background: rgba(0, 0, 0, 0.04) !important;
     color: #111111 !important;
 }
 
-body.light-theme .tab-btn.active {
+body.light-theme:not([data-public-page="true"]) .tab-btn.active {
     color: #111111 !important;
     background: rgba(197, 156, 0, 0.12) !important;
 }

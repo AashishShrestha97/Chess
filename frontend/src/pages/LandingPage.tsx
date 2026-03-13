@@ -6,6 +6,10 @@ import Footer from "../components/LandingPage/Footer";
 import "./LandingPage.css";
 
 const LandingPage: React.FC = () => {
+  React.useEffect(() => {
+    document.body.setAttribute("data-public-page", "true");
+    return () => document.body.removeAttribute("data-public-page");
+  }, []);
   return (
     <>
       <Header />

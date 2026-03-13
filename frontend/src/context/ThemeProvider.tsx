@@ -15,15 +15,13 @@ interface ThemeContextValue {
 
 const ThemeContext = createContext<ThemeContextValue | undefined>(undefined);
 
-const THEME_STORAGE_KEY = "chess4everyone-theme";
-
 const getInitialTheme = (): Theme => {
   if (typeof window === "undefined") {
     return "dark";
   }
 
   try {
-    const stored = window.localStorage.getItem(THEME_STORAGE_KEY);
+    const stored = window.localStorage.getItem("chess4everyone-theme");
     if (stored === "light" || stored === "dark") {
       return stored;
     }
@@ -31,6 +29,7 @@ const getInitialTheme = (): Theme => {
     // ignore read errors and fall back to default
   }
 
+  // Default when nothing stored
   return "dark";
 };
 
@@ -46,8 +45,9 @@ export const ThemeProvider: React.FC<{ children: ReactNode }> = ({
     body.classList.remove("light-theme", "dark-theme");
     body.classList.add(`${theme}-theme`);
 
+    // Persist choice so navigation / reload keeps the same theme
     try {
-      window.localStorage.setItem(THEME_STORAGE_KEY, theme);
+      window.localStorage.setItem("chess4everyone-theme", theme);
     } catch {
       // ignore write errors
     }

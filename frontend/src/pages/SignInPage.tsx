@@ -5,6 +5,10 @@ import SignInForm from "../components/Auth/SignIn/SignInForm";
 
 const SignInPage: React.FC = () => {
   useEffect(() => {
+    document.body.setAttribute("data-public-page", "true");
+    return () => document.body.removeAttribute("data-public-page");
+  }, []);
+  useEffect(() => {
     const obs = new IntersectionObserver(
       (entries) =>
         entries.forEach(
