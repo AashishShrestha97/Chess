@@ -41,105 +41,71 @@ public class ProfileController {
     private final UserRepository userRepo;
     private final JwtService jwtService;
     private final GameAnalysisService gameAnalysisService;
-    private final ChessMLAnalysisService chessMLAnalysisService;  // NEW: ML microservice
-    private final ChessGameService chessGameService;  // NEW: Game fetching service
+    private final ChessMLAnalysisService chessMLAnalysisService;
+    private final ChessGameService chessGameService;
     private final GameModeService gameModeService;
     private final GameRepository gameRepository;
-    private final PlayerAnalysisRepository playerAnalysisRepository;  // NEW: For saving analysis
+    private final PlayerAnalysisRepository playerAnalysisRepository;
+
+    /** Minimum number of complete (ML-worthy) games required for analysis. */
+    private static final int MIN_ML_GAMES = 10;
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Auth helper
+    // ─────────────────────────────────────────────────────────────────────────
 
     private Long getUserIdFromRequest(HttpServletRequest req) {
         log.debug("🔍 Extracting user ID from request");
-        
-        // Log all cookies
-        if (req.getCookies() != null) {
-            log.debug("🍪 Total cookies: " + req.getCookies().length);
-            for (Cookie cookie : req.getCookies()) {
-                log.debug("  Cookie: " + cookie.getName());
-            }
-        } else {
-            log.debug("⚠️ No cookies in request");
-        }
-        
-        String subject = null;
+
         if (req.getCookies() != null) {
             for (Cookie c : req.getCookies()) {
                 if ("ch4e_access".equals(c.getName())) {
                     try {
-                        subject = jwtService.parseToken(c.getValue()).getBody().getSubject();
-                        log.debug("✅ Token parsed, user ID: " + subject);
+                        String subject = jwtService.parseToken(c.getValue()).getBody().getSubject();
+                        log.debug("✅ Token parsed, user ID: {}", subject);
+                        return Long.valueOf(subject);
                     } catch (Exception e) {
-                        log.error("❌ Token parsing failed: " + e.getMessage(), e);
+                        log.error("❌ Token parsing failed: {}", e.getMessage(), e);
                     }
                 }
             }
+        } else {
+            log.debug("⚠️ No cookies in request");
         }
-        
-        if (subject == null) {
-            log.debug("❌ No valid token found");
-            return null;
-        }
-        
-        return Long.valueOf(subject);
+
+        log.debug("❌ No valid token found");
+        return null;
     }
 
+    // ─────────────────────────────────────────────────────────────────────────
+    // Profile CRUD
+    // ─────────────────────────────────────────────────────────────────────────
+
     @PutMapping("/update")
-    public ResponseEntity<?> updateProfile(HttpServletRequest req, @RequestBody UpdateProfileRequest updateRequest) {
+    public ResponseEntity<?> updateProfile(HttpServletRequest req,
+                                           @RequestBody UpdateProfileRequest updateRequest) {
         try {
-            log.info("📝 Update profile request received");
-            log.info("   Request name: " + updateRequest.name());
-            log.info("   Request phone: " + updateRequest.phone());
-            
             Long userId = getUserIdFromRequest(req);
-            if (userId == null) {
-                log.warn("⚠️ No valid user ID in request");
-                return ResponseEntity.status(401).body("Unauthorized");
-            }
+            if (userId == null) return ResponseEntity.status(401).body("Unauthorized");
 
-            log.info("👤 Updating profile for user ID: " + userId);
-            
-            User user = userRepo.findById(userId).orElseThrow(() -> new RuntimeException("User not found"));
-            
-            log.info("   Current name: " + user.getName());
-            log.info("   Current phone: " + user.getPhone());
+            User user = userRepo.findById(userId)
+                    .orElseThrow(() -> new RuntimeException("User not found"));
 
-            // Update name if provided
             if (updateRequest.name() != null && !updateRequest.name().trim().isEmpty()) {
-                log.info("   Setting new name: " + updateRequest.name().trim());
                 user.setName(updateRequest.name().trim());
             }
-
-            // Update phone if provided (set to null if empty)
             if (updateRequest.phone() != null) {
-                if (!updateRequest.phone().trim().isEmpty()) {
-                    log.info("   Setting new phone: " + updateRequest.phone().trim());
-                    user.setPhone(updateRequest.phone().trim());
-                } else {
-                    log.info("   Clearing phone (setting to null)");
-                    user.setPhone(null);
-                }
+                user.setPhone(updateRequest.phone().trim().isEmpty() ? null : updateRequest.phone().trim());
             }
 
-            @SuppressWarnings("null")
             User saved = userRepo.save(user);
-            
-            log.info("✅ Profile saved for user: " + userId);
-            log.info("   New name: " + saved.getName());
-            log.info("   New phone: " + saved.getPhone());
+            log.info("✅ Profile saved for user: {}", userId);
 
-            // Return updated user info
-            UserResponse response = new UserResponse(
-                saved.getId(),
-                saved.getName(),
-                saved.getEmail(),
-                saved.getPhone(),
-                saved.getProvider()
-            );
-
-            return ResponseEntity.ok(response);
+            return ResponseEntity.ok(new UserResponse(
+                    saved.getId(), saved.getName(), saved.getEmail(),
+                    saved.getPhone(), saved.getProvider()));
         } catch (Exception e) {
-            log.error("❌ Error updating profile: " + e.getMessage());
-            log.error("   Exception type: " + e.getClass().getName());
-            log.error("   Stack trace: ", e);
+            log.error("❌ Error updating profile: {}", e.getMessage(), e);
             return ResponseEntity.status(500).body("Error updating profile: " + e.getMessage());
         }
     }
@@ -147,38 +113,26 @@ public class ProfileController {
     @GetMapping("/user-info")
     public ResponseEntity<?> getUserInfo(HttpServletRequest req) {
         Long userId = getUserIdFromRequest(req);
-        if (userId == null) {
-            return ResponseEntity.status(401).body("Unauthorized");
-        }
+        if (userId == null) return ResponseEntity.status(401).body("Unauthorized");
 
         User user = userRepo.findById(userId).orElseThrow();
-
-        UserResponse response = new UserResponse(
-            user.getId(),
-            user.getName(),
-            user.getEmail(),
-            user.getPhone(),
-            user.getProvider()
-        );
-
-        return ResponseEntity.ok(response);
+        return ResponseEntity.ok(new UserResponse(
+                user.getId(), user.getName(), user.getEmail(),
+                user.getPhone(), user.getProvider()));
     }
 
-    /**
-     * Get user's games analysis with AI-powered insights
-     * Returns game statistics and analysis if 10+ games available
-     */
+    // ─────────────────────────────────────────────────────────────────────────
+    // Analysis
+    // ─────────────────────────────────────────────────────────────────────────
+
     @GetMapping("/games-analysis")
     public ResponseEntity<?> getGamesAnalysis(HttpServletRequest req) {
         Long userId = getUserIdFromRequest(req);
-        if (userId == null) {
-            return ResponseEntity.status(401).body("Unauthorized");
-        }
+        if (userId == null) return ResponseEntity.status(401).body("Unauthorized");
 
         try {
             User user = userRepo.findById(userId)
                     .orElseThrow(() -> new RuntimeException("User not found"));
-            
             UserGamesAnalysisDto analysis = gameAnalysisService.getUserGamesAnalysis(user);
             return ResponseEntity.ok(analysis);
         } catch (Exception e) {
@@ -188,14 +142,16 @@ public class ProfileController {
     }
 
     /**
-     * Update user's analysis with latest games
-     * Calls Python ML API to analyze 10 most recent games using trained ML models
-     * Requires at least 10 games to be played
-     * 
-     * Architecture: Frontend → Spring Boot → Python ML Server
+     * Trigger ML analysis for the current user's recent games.
+     *
+     * <p>Before calling the Python ML service we check how many <em>complete</em>
+     * games the user has (games long enough to yield meaningful features). If
+     * the user does not have enough qualifying games we return HTTP 400 with a
+     * structured JSON body so the frontend can display a helpful message.</p>
      */
     @PostMapping("/update-analysis")
-    public ResponseEntity<?> updateAnalysis(HttpServletRequest req, @RequestBody(required = false) Map<String, Object> body) {
+    public ResponseEntity<?> updateAnalysis(HttpServletRequest req,
+                                            @RequestBody(required = false) Map<String, Object> body) {
         Long userId = getUserIdFromRequest(req);
         if (userId == null) {
             log.warn("⚠️ Unauthorized update-analysis request");
@@ -205,131 +161,141 @@ public class ProfileController {
         try {
             User user = userRepo.findById(userId)
                     .orElseThrow(() -> new RuntimeException("User not found"));
-            
+
             log.info("📊 Analysis request for user: {} ({})", userId, user.getName());
-            
-            // Determine how many recent games to analyze (default 1)
-            int requestedCount = 1;
+
+            // ── Determine requested game count (default = MIN_ML_GAMES) ───────
+            int requestedCount = MIN_ML_GAMES;
             if (body != null && body.get("count") != null) {
                 try {
                     requestedCount = Integer.parseInt(String.valueOf(body.get("count")));
                 } catch (NumberFormatException nfe) {
-                    log.warn("⚠️ Invalid count supplied in request body: {}", body.get("count"));
-                    requestedCount = 1;
+                    log.warn("⚠️ Invalid count in request body: {}", body.get("count"));
                 }
             }
+            // Cap within [MIN_ML_GAMES, 20]
+            requestedCount = Math.max(MIN_ML_GAMES, Math.min(20, requestedCount));
 
-            // Check how many games the user actually has
-            long gameCount = chessGameService.countGamesWithPGN(user);
-            if (gameCount < requestedCount) {
-                log.warn("⚠️ User {} has only {} games, requested {} for analysis", userId, gameCount, requestedCount);
-                return ResponseEntity.status(400)
-                    .body("Need at least " + requestedCount + " games for analysis. You have " + gameCount);
+            // ── Check quality game count BEFORE calling ML service ────────────
+            long mlWorthyCount = chessGameService.countMLWorthyGames(user);
+            long totalGames    = chessGameService.countGamesWithPGN(user);
+
+            if (mlWorthyCount < requestedCount) {
+                long gamesNeeded = requestedCount - mlWorthyCount;
+
+                log.warn("⚠️ User {} has only {} complete games (need {}); {} games filtered as too short",
+                        userId, mlWorthyCount, requestedCount, totalGames - mlWorthyCount);
+
+                // Return a structured 400 the frontend can parse
+                return ResponseEntity.status(400).body(Map.of(
+                        "error",           "NOT_ENOUGH_COMPLETE_GAMES",
+                        "message",         buildNotEnoughGamesMessage(mlWorthyCount, gamesNeeded, totalGames),
+                        "mlWorthyGames",   mlWorthyCount,
+                        "totalGames",      totalGames,
+                        "gamesNeeded",     gamesNeeded,
+                        "minimumRequired", requestedCount
+                ));
             }
 
-            // Call ML microservice to analyze player
-            log.info("🔗 Calling ML microservice for analysis (games={} )...", requestedCount);
+            // ── Call ML microservice ───────────────────────────────────────────
+            log.info("🔗 Calling ML microservice (games={})...", requestedCount);
             MLAnalysisResponse mlAnalysis = chessMLAnalysisService.analyzePlayer(
-                user,
-                user.getName(),  // Use user's name as player name
-                requestedCount  // Analyze requested number of recent games
-            );
-            
+                    user, user.getName(), requestedCount);
+
             if (mlAnalysis == null) {
                 log.error("❌ ML service returned null response");
                 return ResponseEntity.status(500).body("ML analysis returned empty response");
             }
-            
-            log.info("✅ ML analysis completed successfully");
-            log.info("   Games analyzed: {}", mlAnalysis.getGamesAnalyzed());
-            log.info("   Strengths: {}", mlAnalysis.getStrengths().size());
-            log.info("   Weaknesses: {}", mlAnalysis.getWeaknesses().size());
-            
-            // Save the analysis results to PlayerAnalysis table for future retrieval
+
+            log.info("✅ ML analysis completed — games={}, strengths={}, weaknesses={}",
+                    mlAnalysis.getGamesAnalyzed(),
+                    mlAnalysis.getStrengths().size(),
+                    mlAnalysis.getWeaknesses().size());
+
+            // ── Persist analysis results ──────────────────────────────────────
             try {
                 PlayerAnalysis playerAnalysis = playerAnalysisRepository.findByUser(user)
-                    .orElseGet(() -> {
-                        PlayerAnalysis newAnalysis = new PlayerAnalysis();
-                        newAnalysis.setUser(user);
-                        return newAnalysis;
-                    });
-                
-                // Convert analysis data to JSON and save
-                com.fasterxml.jackson.databind.ObjectMapper mapper = new com.fasterxml.jackson.databind.ObjectMapper();
-                
+                        .orElseGet(() -> {
+                            PlayerAnalysis a = new PlayerAnalysis();
+                            a.setUser(user);
+                            return a;
+                        });
+
+                com.fasterxml.jackson.databind.ObjectMapper mapper =
+                        new com.fasterxml.jackson.databind.ObjectMapper();
+
                 playerAnalysis.setGamesAnalyzed(mlAnalysis.getGamesAnalyzed());
                 playerAnalysis.setStrengths(mapper.writeValueAsString(mlAnalysis.getStrengths()));
                 playerAnalysis.setWeaknesses(mapper.writeValueAsString(mlAnalysis.getWeaknesses()));
-                
-                // Normalize predictions field names for consistent parsing later
-                Map<String, Object> predictions = new java.util.HashMap<>();
+
+                java.util.Map<String, Object> predictions = new java.util.HashMap<>();
                 if (mlAnalysis.getPredictions() != null) {
-                    Map<String, Object> mlPredictions = mapper.convertValue(mlAnalysis.getPredictions(), 
-                        new com.fasterxml.jackson.core.type.TypeReference<Map<String, Object>>() {});
-                    
-                    // Map ML field names to our standard names
-                    predictions.put("opening", mlPredictions.get("opening"));
-                    predictions.put("middlegame", mlPredictions.get("middlegame"));
-                    predictions.put("endgame", mlPredictions.get("endgame"));
-                    predictions.put("tactical", mlPredictions.get("tactical"));
-                    predictions.put("positional", mlPredictions.getOrDefault("positional", mlPredictions.get("strategy")));
-                    predictions.put("timeManagement", mlPredictions.getOrDefault("timeManagement", mlPredictions.get("time_management")));
+                    java.util.Map<String, Object> mlPredictions = mapper.convertValue(
+                            mlAnalysis.getPredictions(),
+                            new com.fasterxml.jackson.core.type.TypeReference<java.util.Map<String, Object>>() {});
+                    predictions.put("opening",        mlPredictions.get("opening"));
+                    predictions.put("middlegame",      mlPredictions.get("middlegame"));
+                    predictions.put("endgame",         mlPredictions.get("endgame"));
+                    predictions.put("tactical",        mlPredictions.get("tactical"));
+                    predictions.put("positional",      mlPredictions.getOrDefault("positional", mlPredictions.get("strategy")));
+                    predictions.put("timeManagement",  mlPredictions.getOrDefault("timeManagement", mlPredictions.get("time_management")));
                 }
                 playerAnalysis.setPredictions(mapper.writeValueAsString(predictions));
                 playerAnalysis.setMetrics(mapper.writeValueAsString(mlAnalysis.getFeatures()));
-                
+
                 playerAnalysisRepository.save(playerAnalysis);
-                log.info("✅ Analysis saved to database for user: {}", userId);
+                log.info("✅ Analysis persisted for user: {}", userId);
             } catch (Exception e) {
-                log.error("⚠️ Failed to save analysis to database: {}", e.getMessage());
-                // Don't fail the request if saving fails, still return the analysis
+                log.error("⚠️ Failed to persist analysis (non-fatal): {}", e.getMessage());
             }
-            
-            // Return the ML analysis response to frontend
+
             return ResponseEntity.ok(mlAnalysis);
-            
+
         } catch (IllegalArgumentException e) {
             log.warn("⚠️ Invalid analysis request: {}", e.getMessage());
-            return ResponseEntity.status(400).body(e.getMessage());
+            return ResponseEntity.status(400).body(Map.of(
+                    "error",   "INVALID_REQUEST",
+                    "message", e.getMessage()
+            ));
         } catch (Exception e) {
             log.error("❌ Error updating analysis: {}", e.getMessage(), e);
-            return ResponseEntity.status(500).body("Error updating analysis: " + e.getMessage());
+            return ResponseEntity.status(500).body(Map.of(
+                    "error",   "ANALYSIS_FAILED",
+                    "message", "Error updating analysis: " + e.getMessage()
+            ));
         }
     }
 
-    /**
-     * Diagnostic endpoint to check game PGN data
-     * /api/profile/debug/games-pgn
-     */
+    // ─────────────────────────────────────────────────────────────────────────
+    // Debug / diagnostic
+    // ─────────────────────────────────────────────────────────────────────────
+
     @GetMapping("/debug/games-pgn")
     public ResponseEntity<?> debugGamesPGN(HttpServletRequest req) {
         Long userId = getUserIdFromRequest(req);
-        if (userId == null) {
-            return ResponseEntity.status(401).body("Unauthorized");
-        }
+        if (userId == null) return ResponseEntity.status(401).body("Unauthorized");
 
         try {
             User user = userRepo.findById(userId)
                     .orElseThrow(() -> new RuntimeException("User not found"));
-            
-            var games = chessGameService.getRecentGamesForML(user, 3);
-            
+
+            var games  = chessGameService.getRecentGamesForML(user, 3);
             var result = new java.util.HashMap<String, Object>();
-            result.put("total_games_in_db", chessGameService.countGamesWithPGN(user));
-            result.put("games_returned", games.size());
-            
+            result.put("total_games_in_db",    chessGameService.countGamesWithPGN(user));
+            result.put("ml_worthy_games",      chessGameService.countMLWorthyGames(user));
+            result.put("games_returned",        games.size());
+
             var gamesList = new java.util.ArrayList<Map<String, Object>>();
             for (int i = 0; i < games.size(); i++) {
                 var gameMap = new java.util.HashMap<String, Object>();
                 String pgn = games.get(i).getPgn();
-                gameMap.put("index", i + 1);
-                gameMap.put("pgn_length", pgn != null ? pgn.length() : 0);
+                gameMap.put("index",            i + 1);
+                gameMap.put("pgn_length",        pgn != null ? pgn.length() : 0);
                 gameMap.put("pgn_first_100_chars", pgn != null && pgn.length() > 100 ? pgn.substring(0, 100) : pgn);
-                gameMap.put("pgn_full", pgn);
                 gamesList.add(gameMap);
             }
             result.put("games", gamesList);
-            
+
             return ResponseEntity.ok(result);
         } catch (Exception e) {
             log.error("❌ Error getting game PGN: {}", e.getMessage(), e);
@@ -337,72 +303,56 @@ public class ProfileController {
         }
     }
 
-    /**
-     * Get game mode statistics for the user
-     * Shows performance metrics for each game mode
-     */
+    // ─────────────────────────────────────────────────────────────────────────
+    // Game mode statistics
+    // ─────────────────────────────────────────────────────────────────────────
+
     @GetMapping("/game-modes")
     public ResponseEntity<?> getGameModeStatistics(HttpServletRequest req) {
         Long userId = getUserIdFromRequest(req);
-        if (userId == null) {
-            return ResponseEntity.status(401).body("Unauthorized");
-        }
+        if (userId == null) return ResponseEntity.status(401).body("Unauthorized");
 
         try {
             User user = userRepo.findById(userId)
                     .orElseThrow(() -> new RuntimeException("User not found"));
-            
-            // Get all game modes
+
             var allModes = gameModeService.getAllGameModes();
-            var stats = new java.util.ArrayList<GameModeStatisticsDto>();
-            
+            var stats    = new java.util.ArrayList<GameModeStatisticsDto>();
+
             for (GameMode mode : allModes) {
                 GameModeStatisticsDto stat = new GameModeStatisticsDto();
                 stat.setModeName(mode.getName());
                 stat.setDisplayName(mode.getDisplayName());
                 stat.setIcon(mode.getIcon());
-                
-                // Get games for this mode
+
                 var games = gameRepository.findByUserAndGameMode(user, mode);
                 stat.setTotalGames((long) games.size());
-                
+
                 if (games.isEmpty()) {
-                    stat.setWins(0L);
-                    stat.setLosses(0L);
-                    stat.setDraws(0L);
-                    stat.calculateRates();
-                    stat.setAverageAccuracy(0);
-                    stat.setTotalTimeSpentMinutes(0L);
+                    stat.setWins(0L); stat.setLosses(0L); stat.setDraws(0L);
+                    stat.calculateRates(); stat.setAverageAccuracy(0); stat.setTotalTimeSpentMinutes(0L);
                 } else {
-                    // Calculate statistics
-                    long wins = games.stream().filter(g -> "WIN".equals(g.getResult())).count();
+                    long wins   = games.stream().filter(g -> "WIN".equals(g.getResult())).count();
                     long losses = games.stream().filter(g -> "LOSS".equals(g.getResult())).count();
-                    long draws = games.stream().filter(g -> "DRAW".equals(g.getResult())).count();
-                    
-                    stat.setWins(wins);
-                    stat.setLosses(losses);
-                    stat.setDraws(draws);
+                    long draws  = games.stream().filter(g -> "DRAW".equals(g.getResult())).count();
+                    stat.setWins(wins); stat.setLosses(losses); stat.setDraws(draws);
                     stat.calculateRates();
-                    
-                    // Calculate average accuracy
-                    double avgAccuracy = games.stream()
-                        .filter(g -> g.getAccuracyPercentage() != null)
-                        .mapToInt(g -> g.getAccuracyPercentage())
-                        .average()
-                        .orElse(0.0);
-                    stat.setAverageAccuracy((int) avgAccuracy);
-                    
-                    // Calculate total time spent
+
+                    double avgAcc = games.stream()
+                            .filter(g -> g.getAccuracyPercentage() != null)
+                            .mapToInt(g -> g.getAccuracyPercentage())
+                            .average().orElse(0.0);
+                    stat.setAverageAccuracy((int) avgAcc);
+
                     long totalTime = games.stream()
-                        .filter(g -> g.getGameDuration() != null)
-                        .map(this::parseGameDurationToMinutes)
-                        .reduce(0L, Long::sum);
+                            .filter(g -> g.getGameDuration() != null)
+                            .map(this::parseGameDurationToMinutes)
+                            .reduce(0L, Long::sum);
                     stat.setTotalTimeSpentMinutes(totalTime);
                 }
-                
                 stats.add(stat);
             }
-            
+
             return ResponseEntity.ok(stats);
         } catch (Exception e) {
             log.error("Error fetching game mode statistics: ", e);
@@ -410,15 +360,32 @@ public class ProfileController {
         }
     }
 
-        private Long parseGameDurationToMinutes(com.chess4everyone.backend.entity.Game game) {
-            if (game.getGameDuration() == null) return 0L;
-            try {
-                // Format is typically "MM+SS" or just minutes
-                String duration = game.getGameDuration();
-                String[] parts = duration.split("\\+");
-                return Long.parseLong(parts[0]);
-            } catch (Exception e) {
-                return 0L;
-            }
+    // ─────────────────────────────────────────────────────────────────────────
+    // Helpers
+    // ─────────────────────────────────────────────────────────────────────────
+
+    private String buildNotEnoughGamesMessage(long available, long needed, long totalIncludingShort) {
+        long shortGames = totalIncludingShort - available;
+        StringBuilder sb = new StringBuilder();
+        sb.append("You need ").append(needed).append(" more complete game")
+          .append(needed == 1 ? "" : "s").append(" for AI analysis. ");
+        sb.append("You currently have ").append(available).append(" qualifying game")
+          .append(available == 1 ? "" : "s").append(".");
+        if (shortGames > 0) {
+            sb.append(" (").append(shortGames).append(" game")
+              .append(shortGames == 1 ? " was" : "s were")
+              .append(" too short — games must have at least 10 moves to count.)");
+        }
+        return sb.toString();
+    }
+
+    private Long parseGameDurationToMinutes(com.chess4everyone.backend.entity.Game game) {
+        if (game.getGameDuration() == null) return 0L;
+        try {
+            String[] parts = game.getGameDuration().split("\\+");
+            return Long.parseLong(parts[0]);
+        } catch (Exception e) {
+            return 0L;
         }
     }
+}

@@ -22,20 +22,18 @@ import {
   FiSave,
   FiArrowLeft,
   FiClock,
+  FiInfo,
 } from "react-icons/fi";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
-// FIX #2 – single source of truth; was split between >= 1 and hardcoded "10"
 const MIN_GAMES_FOR_ANALYSIS = 10;
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-// FIX #4 – type now also accepts "excellent" so TypeScript doesn't complain
-// if a raw value slips through; normalizePredictions always maps it to "strong"
 interface CategoryAnalysis {
   classification: "strong" | "average" | "weak";
   confidence: number;
-  numericScore: number; // 0-100 skill level percentage
+  numericScore: number;
 }
 
 interface AnalysisResult {
@@ -52,9 +50,7 @@ interface AnalysisResult {
   };
   strengths: string[];
   weaknesses: string[];
-  features: {
-    [key: string]: number;
-  };
+  features: { [key: string]: number };
   recommendation: string;
 }
 
@@ -71,11 +67,23 @@ interface ProfileData {
   lastAnalysisDate?: string;
 }
 
+/**
+ * Structured error returned by the backend when there are not enough
+ * complete games for ML analysis.
+ */
+interface NotEnoughGamesError {
+  error: "NOT_ENOUGH_COMPLETE_GAMES";
+  message: string;
+  mlWorthyGames: number;
+  totalGames: number;
+  gamesNeeded: number;
+  minimumRequired: number;
+}
+
 // ─── Component ────────────────────────────────────────────────────────────────
 
 const ProfilePage: React.FC = () => {
   const navigate = useNavigate();
-  // FIX #1 – removed unused `logout` from destructuring
   const { user, loading: authLoading } = useAuth();
 
   const [loading, setLoading] = useState(false);
@@ -83,6 +91,10 @@ const ProfilePage: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [isEditing, setIsEditing] = useState(false);
+
+  /** Non-null when the backend says there aren't enough complete games. */
+  const [notEnoughGamesInfo, setNotEnoughGamesInfo] =
+    useState<NotEnoughGamesError | null>(null);
 
   const [profileData, setProfileData] = useState<ProfileData>({
     displayName: user?.name || "Chess Player",
@@ -98,14 +110,11 @@ const ProfilePage: React.FC = () => {
   const [editedName, setEditedName] = useState(profileData.displayName);
   const [editedPhone, setEditedPhone] = useState(profileData.phone);
 
-  // ─── Lifecycle ───────────────────────────────────────────────────────────────
+  // ─── Lifecycle ───────────────────────────────────────────────────────────
 
   useEffect(() => {
     if (authLoading) return;
-    if (!user) {
-      navigate("/login");
-      return;
-    }
+    if (!user) { navigate("/login"); return; }
     fetchProfileData();
   }, [user, authLoading, navigate]);
 
@@ -114,77 +123,46 @@ const ProfilePage: React.FC = () => {
     setEditedPhone(profileData.phone);
   }, [profileData.displayName, profileData.phone]);
 
-  // ─── Data helpers ─────────────────────────────────────────────────────────
+  // ─── Normalise ML predictions ─────────────────────────────────────────────
 
-  /**
-   * Normalise raw ML prediction data into the AnalysisResult.predictions shape.
-   *
-   * FIX #4  – maps "excellent" (new Python model) → "strong"
-   * FIX #5  – timeManagement also tries snake_case key "time_management"
-   * FIX #6  – positional also tries legacy key "strategy"
-   * FIX #7  – removed dead mapClassificationFromNumeric helper
-   * FIX #8  – corrected score bands: 0-33 weak | 34-67 average | 68-100 strong
-   */
   const normalizePredictions = (rawPredictions: any): AnalysisResult["predictions"] => {
-    // For each UI key, list every API key that might carry its data (priority order)
     const keyVariants: Record<string, string[]> = {
       opening:        ["opening"],
       middlegame:     ["middlegame"],
       endgame:        ["endgame"],
       tactical:       ["tactical"],
-      positional:     ["positional", "strategy"],            // FIX #6
-      timeManagement: ["timeManagement", "time_management"], // FIX #5
+      positional:     ["positional", "strategy"],
+      timeManagement: ["timeManagement", "time_management"],
     };
 
     const normalized: any = {};
 
     for (const [uiKey, apiKeys] of Object.entries(keyVariants)) {
-      // Pick the first matching key
       let raw: any = {};
       for (const k of apiKeys) {
-        if (rawPredictions?.[k] !== undefined) {
-          raw = rawPredictions[k];
-          break;
-        }
+        if (rawPredictions?.[k] !== undefined) { raw = rawPredictions[k]; break; }
       }
 
-      // ── Numeric score ───────────────────────────────────────────────────
       let numericScore: number | undefined = raw.numeric_score ?? raw.numericScore ?? raw.score;
-
       if (numericScore === undefined && typeof raw.classification === "string") {
         const cls = raw.classification.toLowerCase();
-        // FIX #4 – treat "excellent" same as "strong"
         numericScore = (cls === "strong" || cls === "excellent") ? 85 : cls === "average" ? 50 : 20;
       }
-
       if (numericScore === undefined) numericScore = 50;
       numericScore = Math.max(0, Math.min(100, Math.round(Number(numericScore))));
 
-      // ── Classification ──────────────────────────────────────────────────
-      // FIX #8 – corrected bands (was <= 33 / <= 66; now 0-33 / 34-67 / 68-100)
       let classification: "strong" | "average" | "weak";
-      if (numericScore <= 33) {
-        classification = "weak";
-      } else if (numericScore <= 67) {
-        classification = "average";
-      } else {
-        classification = "strong";
-      }
+      if (numericScore <= 33)      classification = "weak";
+      else if (numericScore <= 67) classification = "average";
+      else                         classification = "strong";
 
-      // Override with explicit classification if provided
       if (raw.classification !== undefined) {
         const cls = String(raw.classification).toLowerCase().trim();
-        // FIX #4 – map "excellent" → "strong" before storing
-        if (cls === "excellent" || cls === "strong") {
-          classification = "strong";
-        } else if (cls === "weak") {
-          classification = "weak";
-        } else {
-          classification = "average";
-        }
+        if (cls === "excellent" || cls === "strong") classification = "strong";
+        else if (cls === "weak")                     classification = "weak";
+        else                                          classification = "average";
       }
 
-      // ── Confidence ──────────────────────────────────────────────────────
       let confidence = 0.5;
       if (raw.confidence !== undefined && raw.confidence !== null) {
         confidence = Number(raw.confidence) || 0;
@@ -206,7 +184,6 @@ const ProfilePage: React.FC = () => {
     try {
       setLoading(true);
       setError(null);
-
       const response = await getUserGamesAnalysis();
       const respData: any = response.data || {};
 
@@ -217,7 +194,6 @@ const ProfilePage: React.FC = () => {
           predictions: normalizePredictions(rawAnalysis.predictions || rawAnalysis),
         };
       }
-
       setProfileData((prev) => ({ ...prev, ...respData }));
     } catch (err: any) {
       console.error("Error fetching profile data:", err);
@@ -232,6 +208,7 @@ const ProfilePage: React.FC = () => {
       setLoadingAnalysis(true);
       setError(null);
       setSuccessMessage(null);
+      setNotEnoughGamesInfo(null);
 
       const response = await updateUserAnalysis(MIN_GAMES_FOR_ANALYSIS);
 
@@ -240,20 +217,19 @@ const ProfilePage: React.FC = () => {
         const rawPreds = mlData.predictions || mlData || {};
 
         const analysisResult: AnalysisResult = {
-          userId:        mlData.user_id  || mlData.userId  || profileData.displayName,
-          timestamp:     mlData.timestamp || new Date().toISOString(),
-          // FIX #9 – use ?? not || so that a legitimate 0 is preserved
-          gamesAnalyzed: mlData.games_analyzed ?? mlData.gamesAnalyzed ?? 0,
-          predictions:   normalizePredictions(rawPreds),
-          strengths:     Array.isArray(mlData.strengths)  ? mlData.strengths  : [],
-          weaknesses:    Array.isArray(mlData.weaknesses) ? mlData.weaknesses : [],
-          features:      mlData.features || {},
+          userId:         mlData.user_id  || mlData.userId  || profileData.displayName,
+          timestamp:      mlData.timestamp || new Date().toISOString(),
+          gamesAnalyzed:  mlData.games_analyzed ?? mlData.gamesAnalyzed ?? 0,
+          predictions:    normalizePredictions(rawPreds),
+          strengths:      Array.isArray(mlData.strengths)  ? mlData.strengths  : [],
+          weaknesses:     Array.isArray(mlData.weaknesses) ? mlData.weaknesses : [],
+          features:       mlData.features || {},
           recommendation: mlData.recommendation || "Keep analyzing games to improve!",
         };
 
         setProfileData((prev) => ({
           ...prev,
-          analysisData:    analysisResult,
+          analysisData:     analysisResult,
           lastAnalysisDate: new Date().toISOString(),
         }));
       }
@@ -263,13 +239,28 @@ const ProfilePage: React.FC = () => {
     } catch (err: any) {
       console.error("Error updating analysis:", err);
 
+      // ── Structured "not enough games" error from backend ─────────────────
+      const responseData = err.response?.data;
+
+      if (
+        err.response?.status === 400 &&
+        responseData?.error === "NOT_ENOUGH_COMPLETE_GAMES"
+      ) {
+        // Show the friendly card instead of a generic error message
+        setNotEnoughGamesInfo(responseData as NotEnoughGamesError);
+        return;
+      }
+
+      // ── Timeout ────────────────────────────────────────────────────────────
       if (err.code === "ECONNABORTED" || err.message?.includes("timeout")) {
         setError(
-          "Analysis is taking longer than expected. This can happen on first analysis or with many games. Please try again in a moment."
+          "Analysis is taking longer than expected. This can happen on first run. Please try again."
         );
-      } else {
-        setError(err.response?.data?.message || "Failed to update analysis. Please try again.");
+        return;
       }
+
+      // ── Generic error ─────────────────────────────────────────────────────
+      setError(responseData?.message || "Failed to update analysis. Please try again.");
     } finally {
       setLoadingAnalysis(false);
     }
@@ -282,28 +273,21 @@ const ProfilePage: React.FC = () => {
       setSuccessMessage(null);
 
       const updateData: any = {};
-
-      if (editedName !== profileData.displayName && editedName.trim().length > 0) {
+      if (editedName !== profileData.displayName && editedName.trim().length > 0)
         updateData.name = editedName.trim();
-      }
-      if (editedPhone !== profileData.phone) {
+      if (editedPhone !== profileData.phone)
         updateData.phone = editedPhone.trim().length > 0 ? editedPhone.trim() : null;
-      }
 
       if (Object.keys(updateData).length === 0) {
-        setError("No changes to save");
-        setLoading(false);
-        return;
+        setError("No changes to save"); setLoading(false); return;
       }
 
       const response = await updateProfile(updateData);
-
       setProfileData((prev) => ({
         ...prev,
         displayName: response.data.name,
         phone:       response.data.phone || "",
       }));
-
       setIsEditing(false);
       setSuccessMessage("Profile updated successfully!");
       setTimeout(() => setSuccessMessage(null), 5000);
@@ -330,7 +314,7 @@ const ProfilePage: React.FC = () => {
   };
 
   const getCategoryLabel = (category: string) => {
-    const labels: { [key: string]: string } = {
+    const labels: Record<string, string> = {
       opening:        "Opening",
       middlegame:     "Middlegame",
       endgame:        "Endgame",
@@ -341,28 +325,16 @@ const ProfilePage: React.FC = () => {
     return labels[category] || category;
   };
 
-  // FIX #4 – "excellent" aliased to "strong" as a last-resort safety net
   const getClassificationColor = (classification: string) => {
-    switch (classification) {
-      case "excellent": // should never reach here after normalization
-      case "strong":    return "strong";
-      case "weak":      return "weak";
-      default:          return "average";
-    }
+    if (classification === "excellent" || classification === "strong") return "strong";
+    if (classification === "weak") return "weak";
+    return "average";
   };
 
-  /**
-   * FIX #4 – dedicated label helper replaces the raw .charAt(0).toUpperCase() call.
-   * Guarantees the display string is always "Strong" / "Average" / "Weak"
-   * even if an unexpected value slips through.
-   */
   const getClassificationLabel = (classification: string) => {
-    switch (classification) {
-      case "excellent":
-      case "strong":  return "Strong";
-      case "weak":    return "Weak";
-      default:        return "Average";
-    }
+    if (classification === "excellent" || classification === "strong") return "Strong";
+    if (classification === "weak") return "Weak";
+    return "Average";
   };
 
   // ─── Auth guard ───────────────────────────────────────────────────────────
@@ -373,9 +345,7 @@ const ProfilePage: React.FC = () => {
         <div className="profile-page">
           <Navbar rating={0} streak={0} />
           <div className="profile-container">
-            <div className="loading-spinner">
-              <p>Loading...</p>
-            </div>
+            <div className="loading-spinner"><p>Loading...</p></div>
           </div>
         </div>
       );
@@ -383,17 +353,13 @@ const ProfilePage: React.FC = () => {
     return (
       <div className="profile-page">
         <Navbar rating={0} streak={0} />
-        <div className="profile-container">
-          <p>Redirecting to login...</p>
-        </div>
+        <div className="profile-container"><p>Redirecting to login...</p></div>
       </div>
     );
   }
 
   const analysis = profileData.analysisData;
-  // FIX #2 – uses the constant; was split between >= 1 (JS) and "10" (JSX text)
   const hasEnoughGames = profileData.totalGames >= MIN_GAMES_FOR_ANALYSIS;
-  // FIX #2, #3 – Math.max(0, ...) so it never goes negative when totalGames > MIN
   const gamesNeeded = Math.max(0, MIN_GAMES_FOR_ANALYSIS - profileData.totalGames);
 
   // ─── Render ───────────────────────────────────────────────────────────────
@@ -411,9 +377,7 @@ const ProfilePage: React.FC = () => {
           </button>
           <div className="header-content">
             <h1 className="profile-title">My Profile</h1>
-            <p className="profile-subtitle">
-              View your chess statistics and performance analysis
-            </p>
+            <p className="profile-subtitle">View your chess statistics and performance analysis</p>
           </div>
           {!isEditing && (
             <button className="edit-btn" onClick={() => setIsEditing(true)} title="Edit Profile">
@@ -437,11 +401,9 @@ const ProfilePage: React.FC = () => {
         {/* Two-column layout */}
         <div className="profile-content">
 
-          {/* ── Left: User info + stats ────────────────────────────────── */}
+          {/* ── Left: User info + stats ──────────────────────────────── */}
           <div className="profile-section user-info-section">
-            <h2 className="section-title">
-              <FiUser /> Basic Information
-            </h2>
+            <h2 className="section-title"><FiUser /> Basic Information</h2>
 
             {!isEditing ? (
               <div className="info-grid">
@@ -462,38 +424,25 @@ const ProfilePage: React.FC = () => {
               <div className="edit-form">
                 <div className="form-group">
                   <label htmlFor="displayName">Display Name</label>
-                  <input
-                    id="displayName"
-                    type="text"
-                    value={editedName}
-                    onChange={(e) => setEditedName(e.target.value)}
-                    className="form-input"
-                  />
+                  <input id="displayName" type="text" value={editedName}
+                    onChange={(e) => setEditedName(e.target.value)} className="form-input" />
                 </div>
                 <div className="form-group">
                   <label htmlFor="phone">Phone Number</label>
-                  <input
-                    id="phone"
-                    type="tel"
-                    value={editedPhone}
+                  <input id="phone" type="tel" value={editedPhone}
                     onChange={(e) => setEditedPhone(e.target.value)}
-                    className="form-input"
-                    placeholder="Enter your phone number"
-                  />
+                    className="form-input" placeholder="Enter your phone number" />
                 </div>
                 <div className="edit-actions">
                   <button className="save-btn" onClick={handleSaveProfile} disabled={loading}>
                     <FiSave /> {loading ? "Saving..." : "Save Changes"}
                   </button>
-                  <button
-                    className="cancel-btn"
+                  <button className="cancel-btn"
                     onClick={() => {
                       setIsEditing(false);
                       setEditedName(profileData.displayName);
                       setEditedPhone(profileData.phone);
-                    }}
-                    disabled={loading}
-                  >
+                    }} disabled={loading}>
                     Cancel
                   </button>
                 </div>
@@ -530,17 +479,14 @@ const ProfilePage: React.FC = () => {
             </div>
           </div>
 
-          {/* ── Right: AI Analysis ─────────────────────────────────────── */}
+          {/* ── Right: AI Analysis ──────────────────────────────────── */}
           <div className="profile-section analysis-section">
             <div className="analysis-header">
-              <h2 className="section-title">
-                <FiBarChart2 /> Chess Analysis
-              </h2>
+              <h2 className="section-title"><FiBarChart2 /> Chess Analysis</h2>
               <button
                 className={`update-btn ${loadingAnalysis ? "loading" : ""}`}
                 onClick={handleUpdateAnalysis}
                 disabled={!hasEnoughGames || loadingAnalysis}
-                // FIX #2 – uses gamesNeeded (never negative); consistent wording
                 title={
                   !hasEnoughGames
                     ? `Play ${gamesNeeded} more game${gamesNeeded !== 1 ? "s" : ""} to enable analysis`
@@ -550,22 +496,20 @@ const ProfilePage: React.FC = () => {
                 }
               >
                 <FiRefreshCw />{" "}
-                {loadingAnalysis ? "Analyzing... (May take up to 2 min)" : "Update Analysis"}
+                {loadingAnalysis ? "Analyzing... (up to 2 min)" : "Update Analysis"}
               </button>
             </div>
 
-            {/* Not enough games */}
+            {/* ── Not enough total games (first-time) ─────────────────── */}
             {!hasEnoughGames ? (
               <div className="no-analysis-message">
                 <FiAlertCircle className="alert-icon" />
                 <h3>Insufficient Game History</h3>
-                {/* FIX #2 – consistent MIN_GAMES_FOR_ANALYSIS reference */}
                 <p>
-                  You need to have at least{" "}
-                  <strong>{MIN_GAMES_FOR_ANALYSIS}</strong> games to get AI-powered analysis.
+                  You need at least <strong>{MIN_GAMES_FOR_ANALYSIS}</strong> games to get
+                  AI-powered analysis.
                 </p>
                 <p className="games-remaining">
-                  {/* FIX #3 – singular/plural now keyed on gamesNeeded === 1, not === 10 */}
                   Play <strong>{gamesNeeded}</strong> more{" "}
                   {gamesNeeded === 1 ? "game" : "games"} to unlock analysis
                 </p>
@@ -574,7 +518,16 @@ const ProfilePage: React.FC = () => {
                 </button>
               </div>
 
+            ) : /* ── Not enough COMPLETE games ────────────────────────────── */
+            notEnoughGamesInfo ? (
+              <NotEnoughCompleteGamesCard
+                info={notEnoughGamesInfo}
+                onPlayNow={() => navigate("/home")}
+                onDismiss={() => setNotEnoughGamesInfo(null)}
+              />
+
             ) : analysis ? (
+              /* ── Analysis results ──────────────────────────────────────── */
               <div className="analysis-content">
                 <div className="analysis-meta">
                   <p className="meta-text">
@@ -592,9 +545,9 @@ const ProfilePage: React.FC = () => {
                     <h4 className="box-title"><FiTrendingUp /> Strengths</h4>
                     <ul className="strength-list">
                       {analysis.strengths.length > 0 ? (
-                        analysis.strengths.map((strength, idx) => (
-                          <li key={idx} className="strength-item">
-                            <FiCheck className="check-icon" /> {strength}
+                        analysis.strengths.map((s, i) => (
+                          <li key={i} className="strength-item">
+                            <FiCheck className="check-icon" /> {s}
                           </li>
                         ))
                       ) : (
@@ -606,9 +559,9 @@ const ProfilePage: React.FC = () => {
                     <h4 className="box-title"><FiTrendingDown /> Areas to Improve</h4>
                     <ul className="weakness-list">
                       {analysis.weaknesses.length > 0 ? (
-                        analysis.weaknesses.map((weakness, idx) => (
-                          <li key={idx} className="weakness-item">
-                            <FiX className="x-icon" /> {weakness}
+                        analysis.weaknesses.map((w, i) => (
+                          <li key={i} className="weakness-item">
+                            <FiX className="x-icon" /> {w}
                           </li>
                         ))
                       ) : (
@@ -618,7 +571,7 @@ const ProfilePage: React.FC = () => {
                   </div>
                 </div>
 
-                {/* Category Breakdown */}
+                {/* Category breakdown */}
                 <div className="category-analysis">
                   <h4 className="box-title">Performance by Category</h4>
                   <div className="category-grid">
@@ -630,7 +583,6 @@ const ProfilePage: React.FC = () => {
                         <div className="category-icon">{getStrengthIcon(category)}</div>
                         <div className="category-content">
                           <h5 className="category-name">{getCategoryLabel(category)}</h5>
-                          {/* FIX #4 – dedicated helper replaces raw .charAt(0).toUpperCase() */}
                           <p className="category-level">
                             {getClassificationLabel(prediction.classification)}
                           </p>
@@ -657,14 +609,169 @@ const ProfilePage: React.FC = () => {
               </div>
 
             ) : (
+              /* ── No analysis yet ───────────────────────────────────────── */
               <div className="no-analysis-message">
                 <FiBarChart2 className="alert-icon" />
                 <h3>No Analysis Yet</h3>
-                <p>Click the "Update Analysis" button to start analyzing your games</p>
+                <p>Click "Update Analysis" to start analyzing your games</p>
               </div>
             )}
           </div>
         </div>
+      </div>
+    </div>
+  );
+};
+
+// ─── NotEnoughCompleteGamesCard ───────────────────────────────────────────────
+
+interface NotEnoughCompleteGamesCardProps {
+  info: NotEnoughGamesError;
+  onPlayNow: () => void;
+  onDismiss: () => void;
+}
+
+const NotEnoughCompleteGamesCard: React.FC<NotEnoughCompleteGamesCardProps> = ({
+  info,
+  onPlayNow,
+  onDismiss,
+}) => {
+  const { mlWorthyGames, totalGames, gamesNeeded, minimumRequired } = info;
+  const shortGames = totalGames - mlWorthyGames;
+
+  return (
+    <div className="no-analysis-message" style={{ textAlign: "left" }}>
+      {/* Icon + title */}
+      <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 16 }}>
+        <FiInfo
+          style={{
+            fontSize: 28,
+            color: "#ffd700",
+            flexShrink: 0,
+            background: "rgba(255,215,0,0.12)",
+            borderRadius: "50%",
+            padding: 4,
+          }}
+        />
+        <h3 style={{ margin: 0, fontSize: "1.05rem" }}>
+          Not Enough Complete Games
+        </h3>
+      </div>
+
+      {/* Progress bar */}
+      <div style={{ marginBottom: 16 }}>
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "space-between",
+            fontSize: "0.82rem",
+            color: "#aaa",
+            marginBottom: 6,
+          }}
+        >
+          <span>Complete games</span>
+          <span>
+            <strong style={{ color: "#ffd700" }}>{mlWorthyGames}</strong> / {minimumRequired}
+          </span>
+        </div>
+        <div
+          style={{
+            height: 8,
+            borderRadius: 4,
+            background: "rgba(255,255,255,0.1)",
+            overflow: "hidden",
+          }}
+        >
+          <div
+            style={{
+              height: "100%",
+              borderRadius: 4,
+              width: `${Math.min(100, (mlWorthyGames / minimumRequired) * 100)}%`,
+              background: "linear-gradient(90deg, #ffd700, #ffaa00)",
+              transition: "width 0.5s ease",
+            }}
+          />
+        </div>
+      </div>
+
+      {/* What counts / doesn't count */}
+      <div
+        style={{
+          background: "rgba(255,255,255,0.04)",
+          borderRadius: 10,
+          padding: "12px 14px",
+          marginBottom: 14,
+          border: "1px solid rgba(255,255,255,0.08)",
+        }}
+      >
+        <p style={{ margin: "0 0 8px", fontSize: "0.88rem", color: "#e0e0e0" }}>
+          You need{" "}
+          <strong style={{ color: "#ffd700" }}>
+            {gamesNeeded} more complete game{gamesNeeded !== 1 ? "s" : ""}
+          </strong>{" "}
+          for AI analysis.
+        </p>
+
+        {shortGames > 0 && (
+          <p
+            style={{
+              margin: 0,
+              fontSize: "0.82rem",
+              color: "#999",
+              lineHeight: 1.5,
+            }}
+          >
+            ⚠️{" "}
+            <strong style={{ color: "#ffcc44" }}>
+              {shortGames} game{shortGames !== 1 ? "s were" : " was"}
+            </strong>{" "}
+            too short to count — games must have at least{" "}
+            <strong style={{ color: "#ffcc44" }}>10 moves</strong>. Quick resigns
+            and disconnects don't qualify.
+          </p>
+        )}
+      </div>
+
+      {/* Tip */}
+      <div
+        style={{
+          background: "rgba(100,200,100,0.06)",
+          borderRadius: 8,
+          padding: "10px 12px",
+          marginBottom: 16,
+          border: "1px solid rgba(100,200,100,0.15)",
+          fontSize: "0.82rem",
+          color: "#aaeaaa",
+        }}
+      >
+        💡 <strong>Tip:</strong> Play longer games (Rapid or Classical) and try to play
+        at least 10 moves before resigning — this ensures your games count towards
+        analysis.
+      </div>
+
+      {/* Actions */}
+      <div style={{ display: "flex", gap: 10 }}>
+        <button
+          className="play-btn"
+          onClick={onPlayNow}
+          style={{ flex: 1 }}
+        >
+          Play a Game Now
+        </button>
+        <button
+          onClick={onDismiss}
+          style={{
+            padding: "10px 16px",
+            borderRadius: 8,
+            border: "1px solid rgba(255,255,255,0.15)",
+            background: "transparent",
+            color: "#888",
+            cursor: "pointer",
+            fontSize: "0.85rem",
+          }}
+        >
+          Dismiss
+        </button>
       </div>
     </div>
   );

@@ -21,132 +21,180 @@ import lombok.extern.slf4j.Slf4j;
 @RequiredArgsConstructor
 @Slf4j
 public class ChessGameService {
-    
+
     private final GameRepository gameRepository;
-    
+
     /**
-     * Get recent games in ML API format (PGN wrapped in MLGameData)
-     * @param user The user whose games to fetch
-     * @param count Number of recent games to fetch
-     * @return List of games formatted for ML API
+     * Minimum number of half-moves (plies) a game must have to be considered
+     * suitable for ML analysis. 20 half-moves = 10 full moves each side,
+     * which gives enough data for opening/middlegame/endgame feature extraction.
+     */
+    private static final int MIN_PLIES_FOR_ML = 20;
+
+    /**
+     * Minimum PGN length in characters. A game with 10 moves will have at least
+     * "1. e4 e5 2. ..." which is well above 100 chars.
+     */
+    private static final int MIN_PGN_LENGTH = 100;
+
+    // ─── Public API ───────────────────────────────────────────────────────────
+
+    /**
+     * Get recent ML-worthy games (long enough to produce meaningful features).
+     * Only returns games that pass the quality filter.
+     *
+     * @param user  The user whose games to fetch
+     * @param count Maximum number of qualifying games to return
+     * @return List of games formatted for ML API (may be shorter than {@code count})
      */
     public List<MLGameData> getRecentGamesForML(User user, int count) {
-        log.info("Fetching {} recent games for ML analysis for user: {}", count, user.getId());
-        
-        List<Game> games = gameRepository.findByUserOrderByPlayedAtDesc(user)
-            .stream()
-            .limit(count)
-            .collect(Collectors.toList());
-        
-        log.info("Found {} total recent games", games.size());
-        
-        if (games.isEmpty()) {
-            log.warn("No games found for user: {}", user.getId());
-            return List.of();
-        }
-        
-        // Log first few games for debugging
-        for (int i = 0; i < Math.min(3, games.size()); i++) {
-            Game g = games.get(i);
-            String pgn = g.getPgn();
-            int moveCount = pgn != null ? pgn.split("\\d+\\.").length - 1 : 0;
-            log.debug("  Game {}: PGN length={}, moves~{}, isNull={}, isEmpty={}", 
-                i+1, 
-                pgn != null ? pgn.length() : "null",
-                moveCount,
-                pgn == null,
-                pgn != null && pgn.trim().isEmpty()
-            );
-            if (pgn != null && pgn.length() < 150) {
-                log.debug("    Content: {}", pgn);
-            }
-        }
-        
-        List<MLGameData> mlGames = games.stream()
-            .filter(g -> {
-                if (g.getPgn() == null) {
-                    System.out.println("⚠️ Filtering out game ID " + g.getId() + ": PGN is null (result: " + g.getResult() + ", opponent: " + g.getOpponentName() + ")");
-                    return false;
-                }
-                if (g.getPgn().trim().isEmpty()) {
-                    System.out.println("⚠️ Filtering out game ID " + g.getId() + ": PGN is empty (result: " + g.getResult() + ", opponent: " + g.getOpponentName() + ")");
-                    return false;
-                }
-                // Check for minimum PGN length - be lenient
-                if (g.getPgn().length() < 50) {
-                    System.out.println("⚠️ Filtering out game ID " + g.getId() + ": PGN too short (" + g.getPgn().length() + " bytes, result: " + g.getResult() + ", opponent: " + g.getOpponentName() + ")");
-                    return false;
-                }
-                
-                // Better move counting: look for actual chess moves (includes algebraic notation like e4, Nf3, etc)
-                // This regex looks for move numbers followed by moves
-                int moveCount = 0;
-                java.util.regex.Pattern movePattern = java.util.regex.Pattern.compile("\\d+\\.\\s*([A-Za-z0-9\\-=+#]+)");
-                java.util.regex.Matcher matcher = movePattern.matcher(g.getPgn());
-                while (matcher.find()) {
-                    moveCount++;
-                }
-                
-                // Accept games with at least 1 move (was 2, now 1)
-                if (moveCount < 1) {
-                    System.out.println("⚠️ Filtering out game ID " + g.getId() + ": Too few moves (" + moveCount + ", result: " + g.getResult() + ", opponent: " + g.getOpponentName() + ", PGN: " + g.getPgn().substring(0, Math.min(100, g.getPgn().length())) + ")");
-                    return false;
-                }
-                System.out.println("✅ Keeping game ID " + g.getId() + ": PGN length=" + g.getPgn().length() + " bytes, moves=" + moveCount);
-                return true;
-            })
-            .map(g -> new MLGameData(g.getPgn()))
-            .collect(Collectors.toList());
-        
-        System.out.println("📊 Converted " + mlGames.size() + " out of " + games.size() + " games to ML format for user " + user.getId());
-        if (mlGames.size() < games.size()) {
-            System.out.println("⚠️ " + (games.size() - mlGames.size()) + " games were filtered out (null/empty/incomplete PGN)");
-        }
+        log.info("Fetching up to {} ML-worthy games for user: {}", count, user.getId());
+
+        List<Game> allGames = gameRepository.findByUserOrderByPlayedAtDesc(user);
+
+        log.info("Found {} total games for user {}", allGames.size(), user.getId());
+
+        List<MLGameData> mlGames = allGames.stream()
+                .filter(g -> isMLWorthy(g))
+                .limit(count)
+                .map(g -> new MLGameData(g.getPgn()))
+                .collect(Collectors.toList());
+
+        log.info("Returning {} ML-worthy games out of {} total for user {}",
+                mlGames.size(), allGames.size(), user.getId());
+
         return mlGames;
     }
-    
+
     /**
-     * Get raw PGN strings for games
-     * @param user The user whose games to fetch
-     * @param count Number of recent games to fetch
-     * @return List of PGN strings
+     * Count games that qualify for ML analysis.
+     * Used by the profile endpoint to tell the user how many more games they need.
+     *
+     * @param user The user to check
+     * @return Number of ML-worthy games
+     */
+    public long countMLWorthyGames(User user) {
+        List<Game> allGames = gameRepository.findByUserOrderByPlayedAtDesc(user);
+        long worthy = allGames.stream().filter(this::isMLWorthy).count();
+        long total  = allGames.size();
+
+        // Log games that were filtered out (up to 5 to avoid log spam)
+        allGames.stream()
+                .filter(g -> !isMLWorthy(g))
+                .limit(5)
+                .forEach(g -> log.debug(
+                        "Filtered out game id={} result={} opponent={} plies={} pgnLen={}",
+                        g.getId(), g.getResult(), g.getOpponentName(),
+                        countPlies(g.getPgn()), g.getPgn() != null ? g.getPgn().length() : 0));
+
+        log.info("User {} has {}/{} ML-worthy games", user.getId(), worthy, total);
+        return worthy;
+    }
+
+    /**
+     * Legacy: count games with *any* PGN data (used by non-ML endpoints).
+     */
+    public long countGamesWithPGN(User user) {
+        List<Game> allGames = gameRepository.findByUserOrderByPlayedAtDesc(user);
+        long withPgn = allGames.stream()
+                .filter(g -> g.getPgn() != null && !g.getPgn().trim().isEmpty())
+                .count();
+        log.info("User {} has {}/{} games with any PGN", user.getId(), withPgn, allGames.size());
+        return withPgn;
+    }
+
+    /**
+     * Get raw PGN strings for games (non-ML, no quality filter).
      */
     public List<String> getRecentGamesPGN(User user, int count) {
         return gameRepository.findByUserOrderByPlayedAtDesc(user)
-            .stream()
-            .limit(count)
-            .map(Game::getPgn)
-            .filter(pgn -> pgn != null && !pgn.trim().isEmpty())
-            .collect(Collectors.toList());
+                .stream()
+                .limit(count)
+                .map(Game::getPgn)
+                .filter(pgn -> pgn != null && !pgn.trim().isEmpty())
+                .collect(Collectors.toList());
     }
-    
+
     /**
-     * Get all games for a user
-     * @param user The user whose games to fetch
-     * @return All games for the user, ordered by most recent first
+     * Get all games for a user (no filter).
      */
     public List<Game> getAllUserGames(User user) {
         return gameRepository.findByUserOrderByPlayedAtDesc(user);
     }
-    
+
+    // ─── Quality filter ───────────────────────────────────────────────────────
+
     /**
-     * Count games with valid PGN data for a user
-     * @param user The user to check
-     * @return Number of games with valid PGN
+     * Determines whether a game is suitable for ML analysis.
+     *
+     * A game qualifies when ALL of the following hold:
+     *  1. PGN is non-null and non-blank
+     *  2. PGN is long enough to contain real moves (>= MIN_PGN_LENGTH chars)
+     *  3. The game contains at least MIN_PLIES_FOR_ML half-moves
+     *
+     * This filters out:
+     *  - Resigned/disconnected games with only 1-3 moves
+     *  - Games saved with empty/placeholder PGN
+     *  - Ultra-short bullet games that ended immediately
      */
-    public long countGamesWithPGN(User user) {
-        List<Game> allGames = gameRepository.findByUserOrderByPlayedAtDesc(user);
-        long gamesWithPGN = allGames.stream()
-            .filter(g -> g.getPgn() != null && !g.getPgn().trim().isEmpty())
-            .count();
-        
-        // Log detailed info about games without PGN
-        allGames.stream()
-            .filter(g -> g.getPgn() == null || g.getPgn().trim().isEmpty())
-            .forEach(g -> System.out.println("⚠️ Game ID " + g.getId() + " missing PGN (result: " + g.getResult() + ", opponent: " + g.getOpponentName() + ")"));
-        
-        System.out.println("📊 User " + user.getName() + " has " + allGames.size() + " total games, " + gamesWithPGN + " with valid PGN");
-        
-        return gamesWithPGN;
+    private boolean isMLWorthy(Game game) {
+        String pgn = game.getPgn();
+
+        // 1. Must have PGN
+        if (pgn == null || pgn.trim().isEmpty()) {
+            log.debug("Game {} filtered: null/empty PGN", game.getId());
+            return false;
+        }
+
+        // 2. Minimum PGN length
+        if (pgn.length() < MIN_PGN_LENGTH) {
+            log.debug("Game {} filtered: PGN too short ({} chars)", game.getId(), pgn.length());
+            return false;
+        }
+
+        // 3. Count actual half-moves
+        int plies = countPlies(pgn);
+        if (plies < MIN_PLIES_FOR_ML) {
+            log.debug("Game {} filtered: only {} plies (need {})", game.getId(), plies, MIN_PLIES_FOR_ML);
+            return false;
+        }
+
+        log.debug("Game {} accepted: {} plies, {} PGN chars", game.getId(), plies, pgn.length());
+        return true;
+    }
+
+    /**
+     * Count half-moves (plies) in a PGN string.
+     *
+     * Strategy: match move-number tokens ("1.", "2.", "1...", etc.) to count
+     * move pairs, then look for a trailing black move on the last pair.
+     * This is fast and does not require parsing the full PGN tree.
+     */
+    private int countPlies(String pgn) {
+        if (pgn == null || pgn.isEmpty()) return 0;
+
+        // Strip PGN headers (lines starting with '[')
+        String movesOnly = pgn.replaceAll("(?m)^\\[.*?\\]\\s*", "")
+                              .replaceAll("\\{[^}]*\\}", "")   // remove comments
+                              .replaceAll("\\([^)]*\\)", "")   // remove variations
+                              .trim();
+
+        // Tokenise
+        String[] tokens = movesOnly.split("\\s+");
+
+        int plies = 0;
+        for (String token : tokens) {
+            if (token.isEmpty()) continue;
+            // Skip move numbers (e.g. "1.", "12.", "3...")
+            if (token.matches("\\d+\\.+")) continue;
+            // Skip result markers
+            if (token.matches("1-0|0-1|1/2-1/2|\\*")) continue;
+            // Anything else that looks like a chess move counts as a ply
+            if (token.matches("[a-hNBRQKO][a-hNBRQK1-8x=+#!?\\-O]*")) {
+                plies++;
+            }
+        }
+
+        return plies;
     }
 }

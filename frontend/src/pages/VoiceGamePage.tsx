@@ -943,7 +943,7 @@ const VoiceGamePage: React.FC<{ timeControl?: string }> = ({ timeControl = "10+0
                 boardWidth={boardWidth}
                 arePiecesDraggable={isDraggable}
                 customSquareStyles={getSquareStyles()}
-                customBoardStyle={{ borderRadius: 16, boxShadow: "0 20px 60px rgba(0,0,0,0.9)" }}
+                customBoardStyle={{ borderRadius: 16, boxShadow: "0  20px 60px rgba(0,0,0,0.9)" }}
               />
               <div className="voice-board-footer">
                 {!isMultiplayer && <button className="voice-small-btn" onClick={() => setBoardOrientation(p => p === "white" ? "black" : "white")}>🔄 Flip</button>}
