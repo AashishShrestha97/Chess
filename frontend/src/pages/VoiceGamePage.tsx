@@ -78,7 +78,8 @@ function stopSpeaking() {
   window.speechSynthesis?.cancel();
 }
 
-// Convert SAN to speakable words
+// ─── Convert SAN to speakable words ──────────────────────────────────────────
+
 function sanToWords(san: string): string {
   san = san.replace(/[+#!?]/g, "");
   if (san === "O-O-O") return "queen side castle";
@@ -87,12 +88,26 @@ function sanToWords(san: string): string {
   const rankWords: Record<string, string> = { "1": "one", "2": "two", "3": "three", "4": "four", "5": "five", "6": "six", "7": "seven", "8": "eight" };
   const sq = (s: string) => `${s[0]} ${rankWords[s[1]] || s[1]}`;
 
+  // Piece move: Nf3, Bxd5, Qe2 etc.
   const pm = san.match(/^([NBRQK])([a-h]?[1-8]?)x?([a-h][1-8])(=[NBRQK])?$/);
   if (pm) return `${pieceNames[pm[1]]} to ${sq(pm[3])}${pm[4] ? " promotes to " + pieceNames[pm[4][1]] : ""}`;
+
+  // Pawn capture: exd5
   const pc = san.match(/^([a-h])x([a-h][1-8])$/);
   if (pc) return `${pc[1]} takes ${sq(pc[2])}`;
+
+  // Pawn move: e4
   const pp = san.match(/^([a-h][1-8])$/);
   if (pp) return `pawn to ${sq(pp[1])}`;
+
+  // Pawn promotion: e8=Q
+  const prom = san.match(/^([a-h][1-8])(=[NBRQK])$/);
+  if (prom) return `pawn to ${sq(prom[1])} promotes to ${pieceNames[prom[2][1]]}`;
+
+  // Pawn capture promotion: exd8=Q
+  const capProm = san.match(/^([a-h])x([a-h][1-8])(=[NBRQK])$/);
+  if (capProm) return `${capProm[1]} takes ${sq(capProm[2])} promotes to ${pieceNames[capProm[3][1]]}`;
+
   return san;
 }
 
@@ -158,8 +173,8 @@ const VoiceGamePage: React.FC<{ timeControl?: string }> = ({ timeControl = "10+0
   const [voiceIndicator, setVoiceIndicator] = useState<"idle" | "listening" | "processing" | "speaking">("idle");
   const [voiceSupported] = useState(!!SR);
 
-  const voiceActiveRef = useRef(false);      // hook should be running
-  const voiceSpeakingRef = useRef(false);    // TTS in progress
+  const voiceActiveRef = useRef(false);
+  const voiceSpeakingRef = useRef(false);
   const recognitionRef = useRef<any>(null);
 
   // Refs for stable access in callbacks
@@ -395,6 +410,27 @@ const VoiceGamePage: React.FC<{ timeControl?: string }> = ({ timeControl = "10+0
     });
   }, [sayMessage, startVoiceListening]);
 
+  // ── NEW: Announce opponent move then activate voice ────────────────────────
+  // This is the key change for blind players: we always speak what the opponent
+  // played before prompting the user for their own move.
+  const announceOpponentMoveAndActivate = useCallback((
+    san: string,
+    prefix: string = "",   // e.g. "Check!" prepended before "Your turn."
+    delayMs: number = 500
+  ) => {
+    if (!SR || gameOverRef.current) return;
+    voiceActiveRef.current = true;
+    const moveWords = sanToWords(san);
+    const checkPart = prefix ? ` ${prefix}` : "";
+    const fullMsg = `Opponent played ${moveWords}.${checkPart} Your turn. Speak your move.`;
+    setTimeout(() => {
+      if (gameOverRef.current) return;
+      sayMessage(fullMsg, () => {
+        if (voiceActiveRef.current && !gameOverRef.current) startVoiceListening();
+      });
+    }, delayMs);
+  }, [sayMessage, startVoiceListening]);
+
   // ── Core move applicator ──────────────────────────────────────────────────
   const applyMove = useCallback((
     moveInput: string | { from: string; to: string; promotion?: string },
@@ -473,11 +509,17 @@ const VoiceGamePage: React.FC<{ timeControl?: string }> = ({ timeControl = "10+0
       );
       playSound(move.captured ? "capture" : "move");
 
+      // ── Solo mode: announce AI move to the player (for blind users) ──────
+      // After the AI plays, speak what it did before re-enabling the mic.
+      if (!isMultiplayer && source === "ai") {
+        const aiMoveWords = sanToWords(move.san);
+        sayMessage(`AI played ${aiMoveWords}.`);
+      }
+
       // Trigger AI in solo mode
       if (!isMultiplayer && sideToMove === "b" && source !== "ai" && !gameOverRef.current) {
         setTimeout(() => makeAIMove(), 800);
       }
-      // For multiplayer, the MOVE server message triggers the other player's turn
     }
 
     setCurrentTurn(game.turn()); currentTurnRef.current = game.turn();
@@ -550,29 +592,51 @@ const VoiceGamePage: React.FC<{ timeControl?: string }> = ({ timeControl = "10+0
             const nextChar = nextTurn === "white" ? "w" : "b";
             setCurrentTurn(nextChar); currentTurnRef.current = nextChar;
 
+            const isMyNow = nextChar === (myColorRef.current === "white" ? "w" : "b");
+
             if (game.isCheckmate()) {
+              // ── Checkmate: announce opponent's final move + result ─────────
               const mover = data.player as string;
               const iWin = mover === myColorRef.current;
               setGameOver(true); gameOverRef.current = true;
               setGameResult(iWin ? "You win! by checkmate" : "You lose! by checkmate");
-              setStatusMessage("Checkmate!"); stopVoiceListening();
-              sayMessage(iWin ? "You win by checkmate!" : "You lose by checkmate.");
+              setStatusMessage("Checkmate!");
+              stopVoiceListening();
+              const moveWords = sanToWords(move.san);
+              sayMessage(
+                iWin
+                  ? `Opponent played ${moveWords}. Checkmate! You win!`
+                  : `Opponent played ${moveWords}. Checkmate. You lose.`
+              );
               playSound("gameEnd");
             } else if (game.isDraw()) {
+              // ── Draw: announce opponent's move + draw ────────────────────
+              const moveWords = sanToWords(move.san);
               setGameOver(true); gameOverRef.current = true;
               setGameResult("Draw!"); setStatusMessage("Game drawn");
-              stopVoiceListening(); sayMessage("The game is a draw."); playSound("gameEnd");
+              stopVoiceListening();
+              sayMessage(`Opponent played ${moveWords}. The game is a draw.`);
+              playSound("gameEnd");
             } else if (game.isCheck()) {
+              // ── Check: announce opponent move + check + prompt ────────────
               playSound("check");
-              const isMyNow = nextChar === (myColorRef.current === "white" ? "w" : "b");
               setStatusMessage(isMyNow ? "Check! Your turn." : "Check!");
-              if (isMyNow) setTimeout(() => activateVoiceForMyTurn(), 800);
+              if (isMyNow) {
+                // Announce the move that caused check, then prompt
+                announceOpponentMoveAndActivate(move.san, "Check!", 800);
+              }
             } else {
+              // ── Normal move ───────────────────────────────────────────────
               playSound(move.captured ? "capture" : "move");
-              const isMyNow = nextChar === (myColorRef.current === "white" ? "w" : "b");
               setStatusMessage(isMyNow ? "Your turn — speak your move!" : "Opponent's turn");
-              if (isMyNow) setTimeout(() => activateVoiceForMyTurn(), 500);
-              else { voiceActiveRef.current = false; setVoiceStatusText("Waiting for opponent..."); setVoiceIndicator("idle"); }
+              if (isMyNow) {
+                // Announce what opponent played, then prompt user's turn
+                announceOpponentMoveAndActivate(move.san, "", 500);
+              } else {
+                voiceActiveRef.current = false;
+                setVoiceStatusText("Waiting for opponent...");
+                setVoiceIndicator("idle");
+              }
             }
           }
         } catch (e) { console.error("Error applying opponent move:", e); }
@@ -584,9 +648,17 @@ const VoiceGamePage: React.FC<{ timeControl?: string }> = ({ timeControl = "10+0
         setGameOver(true); gameOverRef.current = true;
         const w = data.winner as string;
         const reason = (data.reason as string) || "Game over";
-        if (w === "draw" || data.result === "DRAW") { setGameResult(`Draw — ${reason}`); setWinner(null); sayMessage("The game is a draw."); }
-        else { const iWin = (w === "white" && myColorRef.current === "white") || (w === "black" && myColorRef.current === "black"); setGameResult(iWin ? "You win!" : "You lose!"); setWinner(iWin ? "You" : "Opponent"); sayMessage(iWin ? "You win!" : "You lose."); }
-        setStatusMessage(reason); stopVoiceListening();
+        if (w === "draw" || data.result === "DRAW") {
+          setGameResult(`Draw — ${reason}`); setWinner(null);
+          sayMessage("The game is a draw.");
+        } else {
+          const iWin = (w === "white" && myColorRef.current === "white") || (w === "black" && myColorRef.current === "black");
+          setGameResult(iWin ? "You win!" : "You lose!");
+          setWinner(iWin ? "You" : "Opponent");
+          sayMessage(iWin ? "You win!" : "You lose.");
+        }
+        setStatusMessage(reason);
+        stopVoiceListening();
         break;
       }
 
@@ -611,7 +683,7 @@ const VoiceGamePage: React.FC<{ timeControl?: string }> = ({ timeControl = "10+0
         sayMessage("Your opponent has disconnected.");
         break;
     }
-  }, [mpState?.timeControl, mpState?.color, sendMessage, playSound, stopVoiceListening, sayMessage, activateVoiceForMyTurn]);
+  }, [mpState?.timeControl, mpState?.color, sendMessage, playSound, stopVoiceListening, sayMessage, activateVoiceForMyTurn, announceOpponentMoveAndActivate]);
 
   // ── WebSocket connection ───────────────────────────────────────────────────
   useEffect(() => {
@@ -636,7 +708,6 @@ const VoiceGamePage: React.FC<{ timeControl?: string }> = ({ timeControl = "10+0
   useEffect(() => {
     if (isMultiplayer) return;
     if (!SR) return;
-    // White always starts in solo, activate voice
     const timer = setTimeout(() => {
       if (!gameOverRef.current && gameRef.current.turn() === "w") {
         voiceActiveRef.current = true;
@@ -671,7 +742,7 @@ const VoiceGamePage: React.FC<{ timeControl?: string }> = ({ timeControl = "10+0
     }
   }, [isMultiplayer, applyMove]);
 
-  // After AI moves in solo, re-activate voice
+  // After AI moves in solo, re-activate voice for white
   useEffect(() => {
     if (isMultiplayer) return;
     if (!gameOver && currentTurn === "w" && clockStarted) {
@@ -808,9 +879,6 @@ const VoiceGamePage: React.FC<{ timeControl?: string }> = ({ timeControl = "10+0
   const isDraggable = isMultiplayer
     ? !gameOver && gameStartedRef.current && gameRef.current.turn() === (myColor === "white" ? "w" : "b") && !isPaused
     : !gameOver && gameRef.current.turn() === "w" && !isPaused;
-
-  // Voice indicator color/label
-  const indicatorClass = voiceListening ? "listening" : voiceIndicator === "speaking" ? "speaking" : voiceIndicator === "processing" ? "processing" : "";
 
   // ── Render ─────────────────────────────────────────────────────────────────
   return (
