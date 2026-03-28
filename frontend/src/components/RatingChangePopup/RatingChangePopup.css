@@ -1,0 +1,38 @@
+/* frontend/src/components/RatingChangePopup/RatingChangePopup.css */
+.rcp-overlay {
+  position: fixed;
+  bottom: 32px;
+  right: 32px;
+  z-index: 9999;
+  animation: rcp-slide-in 0.4s cubic-bezier(0.34,1.56,0.64,1),
+             rcp-fade-out 0.5s 4s ease forwards;
+}
+
+@keyframes rcp-slide-in {
+  from { transform: translateY(40px); opacity: 0; }
+  to   { transform: translateY(0);    opacity: 1; }
+}
+@keyframes rcp-fade-out {
+  from { opacity: 1; }
+  to   { opacity: 0; }
+}
+
+.rcp-card {
+  background: rgba(18, 18, 18, 0.97);
+  border-radius: 16px;
+  padding: 20px 28px;
+  text-align: center;
+  min-width: 160px;
+  box-shadow: 0 16px 48px rgba(0,0,0,0.8);
+}
+
+.rcp-overlay.gain .rcp-card { border: 1px solid rgba(76, 175, 80, 0.5); }
+.rcp-overlay.loss .rcp-card { border: 1px solid rgba(244, 67, 54, 0.5); }
+
+.rcp-icon    { font-size: 1.8rem; margin-bottom: 4px; }
+.rcp-label   { font-size: 0.72rem; color: #888; text-transform: uppercase; letter-spacing: 0.08em; }
+.rcp-change  { font-size: 2rem; font-weight: 800; margin: 4px 0; }
+.rcp-change.gain { color: #4caf50; }
+.rcp-change.loss { color: #f44336; }
+.rcp-new     { font-size: 0.85rem; color: #ccc; margin-top: 4px; }
+.rcp-new strong { color: #ffd700; }

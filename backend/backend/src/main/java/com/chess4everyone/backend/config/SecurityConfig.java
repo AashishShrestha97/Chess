@@ -63,16 +63,18 @@ public class SecurityConfig {
                 exceptionHandling.authenticationEntryPoint(restAuthenticationEntryPoint)
             )
             
+// Inside filterChain(), replace the authorizeHttpRequests block:
 .authorizeHttpRequests(auth -> auth
     .requestMatchers(
         "/api/auth/register",
         "/api/auth/login",
         "/api/auth/refresh",
         "/api/deepgram/**",
-        "/api/auth/ws-token",   // ← add this line
+        "/api/auth/ws-token",
         "/api/notifications/**",
-        "/api/matchmaking",      // ← ADD
-        "/api/game/**",          // ← ADD (WS auth via token param)
+        "/api/matchmaking",
+        "/api/game/**",
+        "/api/ratings/leaderboard",   // ← public leaderboard
         "/oauth2/**",
         "/login/oauth2/**"
     ).permitAll()

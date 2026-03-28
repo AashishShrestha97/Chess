@@ -1,75 +1,73 @@
+// frontend/src/pages/RankingsPage.tsx  — replace the existing file
 import React, { useState, useEffect, useCallback } from "react";
 import { FiSearch, FiUsers, FiAward, FiTrendingUp } from "react-icons/fi";
 import Navbar from "../components/Navbar/Navbar";
-import { getGlobalRankings, searchPlayers, type PlayerRankDto } from "../api/rankings";
+import {
+  getLeaderboard,
+  displayRating,
+  rdLabel,
+  type LeaderboardEntry,
+  type LeaderboardResponse,
+} from "../api/ratings";
 import "./RankingsPage.css";
 
 const PAGE_SIZE = 50;
 
-/* ── Helpers ──────────────────────────────────────────── */
-function getInitials(name: string): string {
-  return name
-    .split(" ")
-    .map((w) => w[0])
-    .join("")
-    .toUpperCase()
-    .slice(0, 2);
+/* ── helpers ──────────────────────────────────────────── */
+function getInitials(name: string) {
+  return name.split(" ").map((w) => w[0]).join("").toUpperCase().slice(0, 2);
 }
-
-function avatarClass(rank: number, isMe: boolean): string {
-  if (isMe) return "av-me";
-  if (rank === 1) return "av-gold";
-  if (rank === 2) return "av-silver";
-  if (rank === 3) return "av-bronze";
+function avatarClass(rank: number, isMe: boolean) {
+  if (isMe)    return "av-me";
+  if (rank===1) return "av-gold";
+  if (rank===2) return "av-silver";
+  if (rank===3) return "av-bronze";
   return "av-default";
 }
-
-function rankMedal(rank: number): string | null {
-  if (rank === 1) return "🥇";
-  if (rank === 2) return "🥈";
-  if (rank === 3) return "🥉";
+function rankMedal(rank: number) {
+  if (rank===1) return "🥇";
+  if (rank===2) return "🥈";
+  if (rank===3) return "🥉";
   return null;
 }
 
-/* ── Podium card for top-3 ────────────────────────────── */
-const PodiumCard: React.FC<{ player: PlayerRankDto }> = ({ player }) => {
+/* ── Podium card ──────────────────────────────────────── */
+const PodiumCard: React.FC<{ player: LeaderboardEntry }> = ({ player }) => {
   const medal = rankMedal(player.rank)!;
-  const cls = player.rank === 1 ? "first" : player.rank === 2 ? "second" : "third";
-  const avCls = avatarClass(player.rank, player.isCurrentUser);
-
+  const cls   = player.rank===1 ? "first" : player.rank===2 ? "second" : "third";
   return (
     <div className={`podium-card ${cls}`}>
       <span className={`podium-rank-badge ${cls}`}>#{player.rank}</span>
       <div className="podium-medal-large">{medal}</div>
-      <div className={`podium-avatar ${avCls}`}>{getInitials(player.name)}</div>
+      <div className={`podium-avatar ${avatarClass(player.rank, player.isCurrentUser)}`}>
+        {getInitials(player.name)}
+      </div>
       <div className="podium-name">{player.name}</div>
-      <div className="podium-rating">{player.rating.toLocaleString()}</div>
+      {/* Show Glicko-2 rating */}
+      <div className="podium-rating">{displayRating(player.glickoRating)}</div>
       <div className="podium-games">{player.gamesPlayed} games</div>
     </div>
   );
 };
 
-/* ── Single row ───────────────────────────────────────── */
-const RankRow: React.FC<{ player: PlayerRankDto }> = ({ player }) => {
+/* ── Row ──────────────────────────────────────────────── */
+const RankRow: React.FC<{ player: LeaderboardEntry }> = ({ player }) => {
   const medal = rankMedal(player.rank);
   const avCls = avatarClass(player.rank, player.isCurrentUser);
-  const ratingDiff = player.ratingChangeThisMonth;
+  const rd    = Math.round(player.glickoRd);
 
   return (
-    <div
-      className={`rankings-row ${player.isCurrentUser ? "is-me" : ""} ${
-        player.rank === 1 ? "top-1" : player.rank === 2 ? "top-2" : player.rank === 3 ? "top-3" : ""
-      }`}
-    >
+    <div className={`rankings-row ${player.isCurrentUser ? "is-me" : ""} ${
+      player.rank===1 ? "top-1" : player.rank===2 ? "top-2" : player.rank===3 ? "top-3" : ""
+    }`}>
+
       {/* Rank */}
       <div className="rank-cell">
-        {medal ? (
-          <span className="rank-medal">{medal}</span>
-        ) : (
-          <span className={`rank-number ${player.rank <= 10 ? "top-10" : ""}`}>
-            #{player.rank}
-          </span>
-        )}
+        {medal
+          ? <span className="rank-medal">{medal}</span>
+          : <span className={`rank-number ${player.rank <= 10 ? "top-10" : ""}`}>
+              #{player.rank}
+            </span>}
       </div>
 
       {/* Player */}
@@ -88,13 +86,11 @@ const RankRow: React.FC<{ player: PlayerRankDto }> = ({ player }) => {
         </div>
       </div>
 
-      {/* Rating */}
+      {/* Glicko-2 Rating + RD */}
       <div className="rating-cell">
-        <div className="rating-value">{player.rating.toLocaleString()}</div>
-        <div
-          className={`rating-change ${ratingDiff > 0 ? "pos" : ratingDiff < 0 ? "neg" : "neu"}`}
-        >
-          {ratingDiff > 0 ? `▲ +${ratingDiff}` : ratingDiff < 0 ? `▼ ${ratingDiff}` : "—"}
+        <div className="rating-value">{displayRating(player.glickoRating)}</div>
+        <div className="rating-rd-small" title="Rating Deviation">
+          ±{rd} <span style={{ color: "#555" }}>({rdLabel(player.glickoRd)})</span>
         </div>
       </div>
 
@@ -116,98 +112,79 @@ const RankRow: React.FC<{ player: PlayerRankDto }> = ({ player }) => {
 
       {/* Streak */}
       <div className="streak-cell">
-        {player.currentStreak > 0 ? (
-          <span className="streak-value">
-            <span className="streak-fire">🔥</span>
-            {player.currentStreak}
-          </span>
-        ) : (
-          <span style={{ color: "#444", fontSize: "0.85rem" }}>—</span>
-        )}
+        {player.currentStreak > 0
+          ? <span className="streak-value"><span className="streak-fire">🔥</span>{player.currentStreak}</span>
+          : <span style={{ color: "#444", fontSize: "0.85rem" }}>—</span>}
       </div>
     </div>
   );
 };
 
-/* ── Main page ────────────────────────────────────────── */
+/* ── Main ─────────────────────────────────────────────── */
 const RankingsPage: React.FC = () => {
-  const [players, setPlayers]           = useState<PlayerRankDto[]>([]);
-  const [myRank,  setMyRank]            = useState<PlayerRankDto | null>(null);
-  const [totalPlayers, setTotalPlayers] = useState(0);
-  const [loading, setLoading]           = useState(true);
-  const [error,   setError]             = useState<string | null>(null);
-  const [page,    setPage]              = useState(0);
-  const [query,   setQuery]             = useState("");
-  const [searchResults, setSearchResults] = useState<PlayerRankDto[] | null>(null);
-  const [searching, setSearching]       = useState(false);
+  const [data,      setData]      = useState<LeaderboardResponse | null>(null);
+  const [loading,   setLoading]   = useState(true);
+  const [error,     setError]     = useState<string | null>(null);
+  const [page,      setPage]      = useState(0);
+  const [query,     setQuery]     = useState("");
+  const [filtered,  setFiltered]  = useState<LeaderboardEntry[] | null>(null);
 
-  /* load page */
-  const loadRankings = useCallback(async (p: number) => {
-    setLoading(true);
-    setError(null);
+  const load = useCallback(async (p: number) => {
+    setLoading(true); setError(null);
     try {
-      const res = await getGlobalRankings(p, PAGE_SIZE);
-      setPlayers(res.data.globalRankings);
-      setMyRank(res.data.currentUserRank);
-      setTotalPlayers(res.data.totalPlayers);
-    } catch (e: any) {
-      setError("Failed to load rankings. Please try again.");
+      const res = await getLeaderboard(p, PAGE_SIZE);
+      setData(res.data);
+    } catch {
+      setError("Failed to load leaderboard. Please try again.");
     } finally {
       setLoading(false);
     }
   }, []);
 
-  useEffect(() => { loadRankings(page); }, [page, loadRankings]);
+  useEffect(() => { load(page); }, [page, load]);
 
-  /* search */
+  // Client-side search filter
   useEffect(() => {
-    if (!query.trim()) { setSearchResults(null); return; }
-    const timer = setTimeout(async () => {
-      setSearching(true);
-      try {
-        const res = await searchPlayers(query.trim());
-        setSearchResults(res.data);
-      } catch {
-        setSearchResults([]);
-      } finally {
-        setSearching(false);
-      }
-    }, 350);
-    return () => clearTimeout(timer);
-  }, [query]);
+    if (!query.trim() || !data) { setFiltered(null); return; }
+    const q = query.toLowerCase();
+    setFiltered(
+      data.rankings.filter((p) => p.name.toLowerCase().includes(q))
+    );
+  }, [query, data]);
 
-  const displayedPlayers = searchResults ?? players;
-  const top3 = players.slice(0, 3);
-  const totalPages = Math.ceil(totalPlayers / PAGE_SIZE);
+  const displayed    = filtered ?? data?.rankings ?? [];
+  const top3         = (data?.rankings ?? []).slice(0, 3);
+  const totalPages   = Math.ceil((data?.totalPlayers ?? 0) / PAGE_SIZE);
+  const myRank       = data?.currentUserRank;
 
   return (
     <div className="rankings-page">
-      <Navbar rating={myRank?.rating ?? 0} streak={myRank?.currentStreak ?? 0} />
+      <Navbar
+        rating={myRank ? displayRating(myRank.glickoRating) : 0}
+        streak={myRank?.currentStreak ?? 0}
+      />
 
       <div className="rankings-container">
         {/* Header */}
         <header className="rankings-header">
           <span className="rankings-trophy-icon">🏆</span>
           <h1 className="rankings-title">Leaderboard</h1>
-          <p className="rankings-subtitle">Compete with the best chess players worldwide</p>
+          <p className="rankings-subtitle">
+            Ranked by Glicko-2 rating — the same system used by FIDE and Lichess
+          </p>
         </header>
 
         {/* Meta pills */}
         <div className="rankings-meta">
           <div className="meta-pill">
-            <FiUsers size={13} />
-            {totalPlayers.toLocaleString()} players ranked
+            <FiUsers size={13} />{(data?.totalPlayers ?? 0).toLocaleString()} players
           </div>
           {myRank && (
             <div className="meta-pill">
-              <FiAward size={13} />
-              Your rank: #{myRank.rank}
+              <FiAward size={13} />Your rank: #{myRank.rank}
             </div>
           )}
-          <div className="meta-pill">
-            <FiTrendingUp size={13} />
-            Updated live
-          </div>
+          <div className="meta-pill"><FiTrendingUp size={13} />Live Glicko-2</div>
         </div>
 
         {/* My rank banner */}
@@ -219,10 +196,8 @@ const RankingsPage: React.FC = () => {
             </div>
             <div style={{ borderLeft: "1px solid rgba(255,215,0,0.2)", paddingLeft: 20 }}>
               <div className="my-rank-name">{myRank.name}</div>
-              <div className="player-badges">
-                {myRank.currentStreak >= 3 && (
-                  <span className="badge-streak">🔥 {myRank.currentStreak} streak</span>
-                )}
+              <div style={{ fontSize: "0.8rem", color: "#888", marginTop: 2 }}>
+                ±{Math.round(myRank.glickoRd)} RD
               </div>
             </div>
             <div className="my-rank-stats">
@@ -243,12 +218,12 @@ const RankingsPage: React.FC = () => {
                 <span className="cap">Win rate</span>
               </div>
             </div>
-            <div className="my-rank-rating">{myRank.rating.toLocaleString()}</div>
+            <div className="my-rank-rating">{displayRating(myRank.glickoRating)}</div>
           </div>
         )}
 
-        {/* Podium top 3 */}
-        {!loading && !searchResults && top3.length === 3 && (
+        {/* Podium */}
+        {!loading && !filtered && top3.length === 3 && (
           <div className="podium-row">
             <PodiumCard player={top3[1]} />
             <PodiumCard player={top3[0]} />
@@ -274,7 +249,7 @@ const RankingsPage: React.FC = () => {
           <div className="rankings-table-head">
             <div>Rank</div>
             <div>Player</div>
-            <div className="col-right">Rating</div>
+            <div className="col-right">Rating ±RD</div>
             <div className="col-right col-games">Games</div>
             <div className="col-right col-winrate">Win Rate</div>
             <div className="col-right col-streak">Streak</div>
@@ -283,14 +258,14 @@ const RankingsPage: React.FC = () => {
           {loading ? (
             <div className="rankings-loading">
               <div className="loading-spinner" />
-              <p>Loading rankings…</p>
+              <p>Loading leaderboard…</p>
             </div>
           ) : error ? (
             <div className="rankings-empty">
               <span className="rankings-empty-icon">⚠️</span>
               <p className="rankings-empty-text">{error}</p>
             </div>
-          ) : displayedPlayers.length === 0 ? (
+          ) : displayed.length === 0 ? (
             <div className="rankings-empty">
               <span className="rankings-empty-icon">🔍</span>
               <p className="rankings-empty-text">
@@ -298,30 +273,26 @@ const RankingsPage: React.FC = () => {
               </p>
             </div>
           ) : (
-            displayedPlayers.map((p) => <RankRow key={p.userId} player={p} />)
+            displayed.map((p) => <RankRow key={p.userId} player={p} />)
           )}
         </div>
 
-        {/* Pagination (only when not searching) */}
-        {!searchResults && !loading && totalPages > 1 && (
+        {/* Pagination */}
+        {!filtered && !loading && totalPages > 1 && (
           <div className="rankings-pagination">
             <button
               className="pagination-btn"
               disabled={page === 0}
-              onClick={() => setPage((prev) => prev - 1)}
-            >
-              ← Previous
-            </button>
+              onClick={() => setPage((p) => p - 1)}
+            >← Previous</button>
             <span className="pagination-info">
               Page {page + 1} of {totalPages}
             </span>
             <button
               className="pagination-btn"
               disabled={page >= totalPages - 1}
-              onClick={() => setPage((prev) => prev + 1)}
-            >
-              Next →
-            </button>
+              onClick={() => setPage((p) => p + 1)}
+            >Next →</button>
           </div>
         )}
       </div>

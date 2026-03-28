@@ -20,6 +20,9 @@ import com.chess4everyone.backend.repository.GameRepository;
 import com.chess4everyone.backend.repository.MultiplayerGameRepository;
 import com.chess4everyone.backend.repository.UserProfileRepository;
 
+import lombok.extern.slf4j.Slf4j;
+
+@Slf4j
 @Service
 public class GameService {
 
@@ -29,11 +32,8 @@ public class GameService {
     private final UserProfileRepository profileRepository;
     private final StockfishAnalysisService stockfishService;
     private final MultiplayerGameRepository multiplayerGameRepository;
+    private final RatingService ratingService;
 
-    // Per-player export locks: key = "canonicalUuid#userId"
-    // We intentionally KEEP the key in the map after save (never remove) so
-    // subsequent calls for the same player+game hit the synchronized block and
-    // see the already-saved state via the DB check, rather than bypassing it.
     private static final java.util.concurrent.ConcurrentHashMap<String, Object> gameExportLocks =
             new java.util.concurrent.ConcurrentHashMap<>();
 
@@ -42,13 +42,15 @@ public class GameService {
                        UserRepository userRepository,
                        UserProfileRepository profileRepository,
                        StockfishAnalysisService stockfishService,
-                       MultiplayerGameRepository multiplayerGameRepository) {
+                       MultiplayerGameRepository multiplayerGameRepository,
+                       RatingService ratingService) {
         this.gameRepository = gameRepository;
         this.analysisRepository = analysisRepository;
         this.userRepository = userRepository;
         this.profileRepository = profileRepository;
         this.stockfishService = stockfishService;
         this.multiplayerGameRepository = multiplayerGameRepository;
+        this.ratingService = ratingService;
     }
 
     /**
@@ -64,24 +66,18 @@ public class GameService {
                 + " | result=" + request.result()
                 + " | uuid=" + request.gameUuid());
 
-        // Strip the "-black" suffix we append for black player's request
         String rawUuid       = request.gameUuid();
         String canonicalUuid = (rawUuid != null && rawUuid.endsWith("-black"))
                 ? rawUuid.substring(0, rawUuid.length() - 6)
                 : rawUuid;
 
-        // Per-player lock key — white and black locks are INDEPENDENT
         String lockKey = (canonicalUuid != null)
                 ? canonicalUuid + "#" + user.getId()
                 : null;
 
         if (lockKey != null) {
-            // computeIfAbsent is atomic; subsequent calls reuse the same Object
             Object lock = gameExportLocks.computeIfAbsent(lockKey, k -> new Object());
             synchronized (lock) {
-                // ── DB-level dedup check ───────────────────────────────────────
-                // For white: check mp.savedGameId (set after white's row is saved)
-                // For black: scan the user's recent games for a matching PGN
                 var mpOpt = multiplayerGameRepository.findByGameUuid(canonicalUuid);
                 if (mpOpt.isPresent()) {
                     MultiplayerGame mp = mpOpt.get();
@@ -94,7 +90,6 @@ public class GameService {
                     }
 
                     if (!isWhite) {
-                        // Black: look for a recent row for this user with the same PGN
                         List<Game> recent = gameRepository.findTop5ByUserOrderByPlayedAtDesc(user);
                         for (Game g : recent) {
                             if (request.pgn() != null
@@ -106,13 +101,11 @@ public class GameService {
                         }
                     }
                 }
-                // ── End dedup check ────────────────────────────────────────────
 
                 return buildAndSaveGame(user, request, ratingChange, canonicalUuid);
             }
         }
 
-        // No UUID — solo game, fall back to PGN dedup
         return buildAndSaveGameSolo(user, request, ratingChange);
     }
 
@@ -123,10 +116,10 @@ public class GameService {
 
         Game game = buildGameEntity(user, request, ratingChange);
         Game savedGame = gameRepository.save(game);
-        System.out.println("✅ Game saved → id=" + savedGame.getId()
-                + " user=" + user.getEmail() + " result=" + request.result());
 
-        // Record savedGameId on the multiplayer_games row for white player
+        log.info("✅ Game saved → id={} user={} result={}",
+                savedGame.getId(), user.getEmail(), request.result());
+
         if (canonicalUuid != null) {
             try {
                 multiplayerGameRepository.findByGameUuid(canonicalUuid).ifPresent(mp -> {
@@ -135,13 +128,16 @@ public class GameService {
                         mp.setSaved(true);
                         mp.setSavedGameId(savedGame.getId());
                         multiplayerGameRepository.save(mp);
-                        System.out.println("✅ multiplayer_games marked saved → games.id=" + savedGame.getId());
                     }
                 });
             } catch (Exception e) {
-                System.out.println("⚠️ Could not mark mp game saved: " + e.getMessage());
+                log.warn("⚠️ Could not mark mp game saved: {}", e.getMessage());
             }
         }
+
+        // ── Glicko-2 rating update ────────────────────────────────────────────
+        triggerRatingUpdate(user, savedGame, request);
+        // ── end rating update ─────────────────────────────────────────────────
 
         updateUserProfile(user, request.result());
         analyzeGameAsync(savedGame);
@@ -149,7 +145,6 @@ public class GameService {
     }
 
     private Game buildAndSaveGameSolo(User user, SaveGameRequest request, Integer ratingChange) {
-        // PGN / movesJson dedup for solo AI games
         try {
             List<Game> recent = gameRepository.findTop5ByUserOrderByPlayedAtDesc(user);
             for (Game g : recent) {
@@ -171,6 +166,10 @@ public class GameService {
         Game savedGame = gameRepository.save(game);
         System.out.println("✅ Solo game saved → id=" + savedGame.getId()
                 + " user=" + user.getEmail() + " result=" + request.result());
+
+        // ── Glicko-2 rating update ────────────────────────────────────────────
+        triggerRatingUpdate(user, savedGame, request);
+        // ── end rating update ─────────────────────────────────────────────────
 
         updateUserProfile(user, request.result());
         analyzeGameAsync(savedGame);
@@ -286,6 +285,55 @@ public class GameService {
                 System.err.println("❌ Failed to analyze game " + game.getId() + ": " + e.getMessage());
             }
         }, "analysis-" + game.getId()).start();
+    }
+
+    // ── Rating update ─────────────────────────────────────────────────────────
+
+    /**
+     * Resolve both players and call {@link RatingService#updateRatings}.
+     * For solo AI games only the human player's profile is updated
+     * (the AI has no user record).
+     */
+    private void triggerRatingUpdate(User user,
+                                      Game savedGame,
+                                      SaveGameRequest request) {
+        new Thread(() -> {
+            try {
+                Long whiteId = request.whitePlayerId();
+                Long blackId = request.blackPlayerId();
+
+                if (whiteId == null || blackId == null) {
+                    // Solo AI game – update only the human
+                    ratingService.updateRatings(
+                            user,
+                            user,           // dummy; service handles solo case
+                            request.result(),
+                            savedGame);
+                    return;
+                }
+
+                userRepository.findById(whiteId).ifPresent(white ->
+                    userRepository.findById(blackId).ifPresent(black -> {
+                        // Determine white's result
+                        String whiteResult;
+                        if (white.getId().equals(user.getId())) {
+                            whiteResult = request.result();
+                        } else {
+                            // current user is black
+                            whiteResult = switch (request.result().toUpperCase()) {
+                                case "WIN"  -> "LOSS";
+                                case "LOSS" -> "WIN";
+                                default     -> "DRAW";
+                            };
+                        }
+                        ratingService.updateRatings(white, black, whiteResult, savedGame);
+                    }));
+
+            } catch (Exception e) {
+                log.error("❌ Rating update failed for game {}: {}",
+                        savedGame.getId(), e.getMessage(), e);
+            }
+        }, "rating-update-" + savedGame.getId()).start();
     }
 
     // ── Profile update ────────────────────────────────────────────────────────

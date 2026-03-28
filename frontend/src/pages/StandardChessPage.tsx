@@ -8,6 +8,8 @@ import gameService from "../api/games";
 import { GameRecorder } from "../utils/gameRecorder";
 import { stockfishService } from "../utils/stockfishService";
 import { getAccessToken } from "../utils/getAccessToken";
+import RatingChangePopup from "../components/RatingChangePopup/RatingChangePopup";
+import { getMyRating, getMyRatingHistory } from "../api/ratings";
 
 // ---------- Types ----------
 interface StandardChessPageProps {
@@ -48,7 +50,6 @@ const StandardChessPage: React.FC<StandardChessPageProps> = ({
   const mpState = isMultiplayer ? (routeState as MultiplayerState) : null;
   const wsRef = useRef<WebSocket | null>(null);
 
-  // Use a ref for myColor so it's always fresh inside callbacks
   const myColorRef = useRef<"white" | "black">(mpState?.color ?? "white");
   const myColor = myColorRef.current;
 
@@ -67,8 +68,6 @@ const StandardChessPage: React.FC<StandardChessPageProps> = ({
     null
   );
 
-  // Initialize clocks to 0 for multiplayer — they get set on GAME_START
-  // For solo, they get set by the effectiveTimeControl effect
   const [whiteTime, setWhiteTime] = useState(isMultiplayer ? 0 : 600);
   const [blackTime, setBlackTime] = useState(isMultiplayer ? 0 : 600);
   const [increment, setIncrement] = useState(0);
@@ -83,17 +82,14 @@ const StandardChessPage: React.FC<StandardChessPageProps> = ({
 
   const [boardWidth, setBoardWidth] = useState<number>(480);
 
-  // Multiplayer-specific UI
   const [drawOfferReceived, setDrawOfferReceived] = useState(false);
   const [gameResult, setGameResult] = useState<string | null>(null);
   const [mpConnectionStatus, setMpConnectionStatus] = useState<
     "connecting" | "waiting" | "playing" | "disconnected"
   >("connecting");
 
-  // clockStarted gate — clock only ticks after GAME_START is received
   const [clockStarted, setClockStarted] = useState(false);
   const clockStartedRef = useRef(false);
-  // gameStarted gate — prevents premature GAME_OVER processing
   const gameStartedRef = useRef(false);
 
   const gameOverRef = useRef(false);
@@ -101,21 +97,17 @@ const StandardChessPage: React.FC<StandardChessPageProps> = ({
   const incrementRef = useRef(0);
   const currentTurnRef = useRef<"w" | "b">("w");
 
-  // Keep refs in sync with state for use inside closures/intervals
   const whiteTimeRef = useRef(isMultiplayer ? 0 : 600);
   const blackTimeRef = useRef(isMultiplayer ? 0 : 600);
 
-  // Time warning flags
   const whiteTimeWarned30 = useRef(false);
   const whiteTimeWarned10 = useRef(false);
   const blackTimeWarned30 = useRef(false);
   const blackTimeWarned10 = useRef(false);
 
-  // Game recorder for saving game data (solo only)
   const gameRecorderRef = useRef<GameRecorder | null>(null);
   const [isSavingGame, setIsSavingGame] = useState(false);
 
-  // Track captured pieces
   const [capturedPieces, setCapturedPieces] = useState<{
     white: string[];
     black: string[];
@@ -124,6 +116,12 @@ const StandardChessPage: React.FC<StandardChessPageProps> = ({
   const [boardOrientation, setBoardOrientation] = useState<"white" | "black">(
     myColor
   );
+
+  // ── Rating change popup state ─────────────────────────────────────────────
+  const [ratingChange, setRatingChange] = useState<{
+    change: number;
+    newRating: number;
+  } | null>(null);
 
   // ------- Basic sync effects -------
   useEffect(() => { gameOverRef.current = gameOver; }, [gameOver]);
@@ -166,7 +164,7 @@ const StandardChessPage: React.FC<StandardChessPageProps> = ({
     setEffectiveTimeControl(tc || timeControl || "10+0");
   }, [routeState, timeControl]);
 
-  // Solo only — init clocks from time control. Multiplayer clocks are set in GAME_START.
+  // Solo only — init clocks from time control
   useEffect(() => {
     if (isMultiplayer) return;
     const [mainPart, incStr] = effectiveTimeControl.split("+");
@@ -189,9 +187,9 @@ const StandardChessPage: React.FC<StandardChessPageProps> = ({
     blackTimeWarned10.current = false;
   }, [effectiveTimeControl, isMultiplayer]);
 
-  // Initialize game recorder (both solo and multiplayer)
+  // Initialize game recorder (solo only)
   useEffect(() => {
-    if (isMultiplayer) return; // Don't re-init recorder during active multiplayer game
+    if (isMultiplayer) return;
     gameRecorderRef.current = new GameRecorder(effectiveTimeControl);
   }, [effectiveTimeControl, isMultiplayer]);
 
@@ -209,7 +207,7 @@ const StandardChessPage: React.FC<StandardChessPageProps> = ({
     return () => { stockfishService.terminate(); };
   }, [isMultiplayer]);
 
-  // ── WebSocket send helper (defined early so handleServerMessage can use it) ──
+  // ── WebSocket send helper ──────────────────────────────────────────────────
   const sendMessage = useCallback((msg: object) => {
     if (wsRef.current?.readyState === WebSocket.OPEN) {
       wsRef.current.send(JSON.stringify(msg));
@@ -268,13 +266,9 @@ const StandardChessPage: React.FC<StandardChessPageProps> = ({
           console.log("🚀 GAME_START received:", data);
 
           let tc: string = (data.timeControl as string) || mpState?.timeControl || "10+0";
-          console.log("🕒 Time control from server:", tc);
           tc = tc.replace("%2B", "+").replace("%2b", "+");
 
           setEffectiveTimeControl(tc);
-          console.log("✅ Setting effectiveTimeControl to:", tc);
-          
-          // ✅ Initialize fresh GameRecorder for multiplayer
           gameRecorderRef.current = new GameRecorder(tc);
 
           const [mainPart, incStr] = tc.split("+");
@@ -378,7 +372,6 @@ const StandardChessPage: React.FC<StandardChessPageProps> = ({
                 gameOverRef.current = true;
                 setGameResult(iWin ? "You win! by checkmate" : "You lose! by checkmate");
                 setStatusMessage("Checkmate!");
-                // ✅ Opponent's move caused checkmate — notify server to save with moves_json
                 sendMessage({
                   type: "GAME_OVER",
                   winner: movedColor,
@@ -390,7 +383,6 @@ const StandardChessPage: React.FC<StandardChessPageProps> = ({
                 gameOverRef.current = true;
                 setGameResult("Draw!");
                 setStatusMessage("Game drawn");
-                // ✅ Notify server to save draw with moves_json
                 sendMessage({
                   type: "GAME_OVER",
                   winner: "draw",
@@ -564,15 +556,35 @@ const StandardChessPage: React.FC<StandardChessPageProps> = ({
     return () => clearTimeout(timeoutId);
   }, [isMultiplayer, mpConnectionStatus]);
 
+  // ── Fetch updated rating after game ends ──────────────────────────────────
+  useEffect(() => {
+    if (!gameOver) return;
+    const timer = setTimeout(async () => {
+      try {
+        const [ratingRes, historyRes] = await Promise.all([
+          getMyRating(),
+          getMyRatingHistory(),
+        ]);
+        const profile = ratingRes.data;
+        const history = historyRes.data;
+        const lastChange = history.length > 0
+          ? history[history.length - 1].change
+          : 0;
+        setRatingChange({
+          change: lastChange,
+          newRating: profile.glickoRating,
+        });
+      } catch { /* non-critical */ }
+    }, 2500);
+    return () => clearTimeout(timer);
+  }, [gameOver]);
+
   const formatTime = (seconds: number): string => {
     const mins = Math.floor(seconds / 60);
     const secs = seconds % 60;
     return `${mins}:${secs.toString().padStart(2, "0")}`;
   };
 
-  /**
-   * Apply move — handles both solo (AI game) and multiplayer
-   */
   const applyMove = useCallback((
     moveInput: string | { from: string; to: string; promotion?: string },
     source: "board" | "ai"
@@ -630,7 +642,6 @@ const StandardChessPage: React.FC<StandardChessPageProps> = ({
       else setBlackTime((prev) => prev + incrementRef.current);
     }
 
-    // Multiplayer: send move over WebSocket
     if (isMultiplayer && source === "board") {
       const nextTurnColor = sideToMove === "w" ? "white" : "black";
       sendMessage({
@@ -645,7 +656,6 @@ const StandardChessPage: React.FC<StandardChessPageProps> = ({
       });
     }
 
-    // Game end checks
     if (game.isCheckmate()) {
       const winColor = sideToMove === "w" ? "Black" : "White";
       setGameOver(true);
@@ -655,7 +665,6 @@ const StandardChessPage: React.FC<StandardChessPageProps> = ({
       if (isMultiplayer) {
         const iWin = winColor.toLowerCase() === myColorRef.current;
         setGameResult(iWin ? "You win! by checkmate" : "You lose! by checkmate");
-        // ✅ Tell backend to save the game
         sendMessage({
           type: "GAME_OVER",
           winner: winColor.toLowerCase(),
@@ -675,7 +684,6 @@ const StandardChessPage: React.FC<StandardChessPageProps> = ({
       setStatusMessage(msg);
       if (isMultiplayer) {
         setGameResult("Draw!");
-        // ✅ Tell backend to save the game
         sendMessage({
           type: "GAME_OVER",
           winner: "draw",
@@ -707,7 +715,6 @@ const StandardChessPage: React.FC<StandardChessPageProps> = ({
     setCurrentTurn(game.turn());
     currentTurnRef.current = game.turn();
 
-    // Solo AI response
     if (!isMultiplayer && game.turn() === "b" && source !== "ai" && !gameOverRef.current) {
       setTimeout(() => makeAIMove(), 800);
     }
@@ -717,7 +724,6 @@ const StandardChessPage: React.FC<StandardChessPageProps> = ({
   }, [isMultiplayer, playSound, sendMessage]);
 
   // Save completed game to database — SOLO ONLY
-  // Multiplayer games are saved by the backend WebSocket handler (endGameAndSave)
   const saveGameToDB = useCallback(async (result: "WIN" | "LOSS" | "DRAW", terminationReason: string) => {
     if (!gameRecorderRef.current) return;
     setIsSavingGame(true);
@@ -731,7 +737,6 @@ const StandardChessPage: React.FC<StandardChessPageProps> = ({
       const movesJson = recorder.getMovesAsJSON();
       const gameStats = recorder.getGameStats();
 
-      // Solo AI game save
       const pgn = recorder.generatePGN(
         "You (White)", "ChessMaster AI", result,
         effectiveTimeControl, "STANDARD", terminationReason
@@ -795,6 +800,7 @@ const StandardChessPage: React.FC<StandardChessPageProps> = ({
     setClockStarted(false);
     setLastMove(null);
     setCapturedPieces({ white: [], black: [] });
+    setRatingChange(null);
     const [mainPart] = effectiveTimeControl.split("+");
     let minutesPart = mainPart;
     if (minutesPart.includes("/")) minutesPart = minutesPart.split("/")[0];
@@ -942,8 +948,7 @@ const StandardChessPage: React.FC<StandardChessPageProps> = ({
     return () => clearInterval(timer);
   }, [isMultiplayer, gameOver, sendMessage]);
 
-  // ✅ Save game on end — SOLO ONLY
-  // Multiplayer is saved server-side via endGameAndSave() triggered by GAME_OVER message
+  // Save game on end — SOLO ONLY
   useEffect(() => {
     if (!gameOver || isSavingGame) return;
     if (isMultiplayer) return;
@@ -1391,6 +1396,15 @@ const StandardChessPage: React.FC<StandardChessPageProps> = ({
           </div>
         </div>
       </div>
+
+      {/* ── Rating Change Popup ──────────────────────────────────────────────── */}
+      {ratingChange && (
+        <RatingChangePopup
+          change={ratingChange.change}
+          newRating={ratingChange.newRating}
+          onClose={() => setRatingChange(null)}
+        />
+      )}
     </>
   );
 };

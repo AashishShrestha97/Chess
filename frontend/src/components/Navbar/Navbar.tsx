@@ -7,6 +7,7 @@ import NotificationCenter from "../NotificationCenter/NotificationCenter";
 import Crown from "../../assets/Crown.png";
 import { FiBell, FiSun, FiMoon } from "react-icons/fi";
 import { useTheme } from "../../context/ThemeProvider";
+import { getMyRating, displayRating } from "../../api/ratings";
 
 interface NavbarProps {
   rating: number;
@@ -19,10 +20,16 @@ const Navbar: React.FC<NavbarProps> = ({ rating, streak }) => {
   const [notificationCenterOpen, setNotificationCenterOpen] = useState(false);
   const [unreadCount, setUnreadCount] = useState(0);
   const { theme, toggleTheme } = useTheme();
+  const [glickoRating, setGlickoRating] = useState<number>(rating);
 
   useEffect(() => {
-    // Load unread count on mount
     loadUnreadCount();
+  }, []);
+
+  useEffect(() => {
+    getMyRating()
+      .then((r) => setGlickoRating(displayRating(r.data.glickoRating)))
+      .catch(() => {});
   }, []);
 
   const loadUnreadCount = async () => {
@@ -85,7 +92,7 @@ const Navbar: React.FC<NavbarProps> = ({ rating, streak }) => {
               <span className="streak-text">{streak} Win Streak</span>
             </div>
 
-            <div className="rating-badge">Rating: {rating}</div>
+            <div className="rating-badge">Rating: {glickoRating}</div>
 
             {/* Notification Bell */}
             <div className="notification-bell">
@@ -116,13 +123,12 @@ const Navbar: React.FC<NavbarProps> = ({ rating, streak }) => {
       </nav>
 
       {/* Notification Center Sidebar */}
-      <NotificationCenter 
-        isOpen={notificationCenterOpen} 
-        onClose={() => setNotificationCenterOpen(false)} 
+      <NotificationCenter
+        isOpen={notificationCenterOpen}
+        onClose={() => setNotificationCenterOpen(false)}
       />
     </>
   );
 };
 
 export default Navbar;
-

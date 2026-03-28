@@ -24,6 +24,13 @@ import {
   FiClock,
   FiInfo,
 } from "react-icons/fi";
+import RatingBadge from "../components/RatingBadge/RatingBadge";
+import RatingChart from "../components/RatingChart/RatingChart";
+import {
+  getMyRating, getMyRatingHistory,
+  displayRating, rdLabel,
+  type RatingProfile, type RatingHistoryEntry,
+} from "../api/ratings";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 const MIN_GAMES_FOR_ANALYSIS = 10;
@@ -109,6 +116,11 @@ const ProfilePage: React.FC = () => {
 
   const [editedName, setEditedName] = useState(profileData.displayName);
   const [editedPhone, setEditedPhone] = useState(profileData.phone);
+
+  // ─── Glicko-2 state ───────────────────────────────────────────────────────
+  const [ratingProfile, setRatingProfile] = useState<RatingProfile | null>(null);
+  const [ratingHistory, setRatingHistory] = useState<RatingHistoryEntry[]>([]);
+  const [ratingLoading, setRatingLoading] = useState(false);
 
   // ─── Lifecycle ───────────────────────────────────────────────────────────
 
@@ -201,6 +213,24 @@ const ProfilePage: React.FC = () => {
     } finally {
       setLoading(false);
     }
+
+    // ── Glicko-2 data ──────────────────────────────────────────────────────
+    const fetchGlickoData = async () => {
+      setRatingLoading(true);
+      try {
+        const [profileRes, historyRes] = await Promise.all([
+          getMyRating(),
+          getMyRatingHistory(),
+        ]);
+        setRatingProfile(profileRes.data);
+        setRatingHistory(historyRes.data);
+      } catch (e) {
+        console.warn("Could not load Glicko-2 data:", e);
+      } finally {
+        setRatingLoading(false);
+      }
+    };
+    fetchGlickoData();
   };
 
   const handleUpdateAnalysis = async () => {
@@ -239,19 +269,16 @@ const ProfilePage: React.FC = () => {
     } catch (err: any) {
       console.error("Error updating analysis:", err);
 
-      // ── Structured "not enough games" error from backend ─────────────────
       const responseData = err.response?.data;
 
       if (
         err.response?.status === 400 &&
         responseData?.error === "NOT_ENOUGH_COMPLETE_GAMES"
       ) {
-        // Show the friendly card instead of a generic error message
         setNotEnoughGamesInfo(responseData as NotEnoughGamesError);
         return;
       }
 
-      // ── Timeout ────────────────────────────────────────────────────────────
       if (err.code === "ECONNABORTED" || err.message?.includes("timeout")) {
         setError(
           "Analysis is taking longer than expected. This can happen on first run. Please try again."
@@ -259,7 +286,6 @@ const ProfilePage: React.FC = () => {
         return;
       }
 
-      // ── Generic error ─────────────────────────────────────────────────────
       setError(responseData?.message || "Failed to update analysis. Please try again.");
     } finally {
       setLoadingAnalysis(false);
@@ -518,8 +544,7 @@ const ProfilePage: React.FC = () => {
                 </button>
               </div>
 
-            ) : /* ── Not enough COMPLETE games ────────────────────────────── */
-            notEnoughGamesInfo ? (
+            ) : notEnoughGamesInfo ? (
               <NotEnoughCompleteGamesCard
                 info={notEnoughGamesInfo}
                 onPlayNow={() => navigate("/home")}
@@ -527,7 +552,6 @@ const ProfilePage: React.FC = () => {
               />
 
             ) : analysis ? (
-              /* ── Analysis results ──────────────────────────────────────── */
               <div className="analysis-content">
                 <div className="analysis-meta">
                   <p className="meta-text">
@@ -609,7 +633,6 @@ const ProfilePage: React.FC = () => {
               </div>
 
             ) : (
-              /* ── No analysis yet ───────────────────────────────────────── */
               <div className="no-analysis-message">
                 <FiBarChart2 className="alert-icon" />
                 <h3>No Analysis Yet</h3>
@@ -618,6 +641,100 @@ const ProfilePage: React.FC = () => {
             )}
           </div>
         </div>
+
+        {/* ── Glicko-2 Rating Section ──────────────────────────────────────── */}
+        {ratingProfile && (
+          <div className="profile-section glicko-section">
+            <h2 className="section-title">🎯 Glicko-2 Rating</h2>
+
+            {/* Big rating display */}
+            <div style={{
+              display: "flex", alignItems: "center", gap: 32,
+              background: "rgba(255,215,0,0.05)",
+              border: "1px solid rgba(255,215,0,0.2)",
+              borderRadius: 16, padding: "20px 24px", marginBottom: 20,
+            }}>
+              <div style={{ textAlign: "center" }}>
+                <div style={{ fontSize: "2.8rem", fontWeight: 800, color: "#ffd700", lineHeight: 1 }}>
+                  {displayRating(ratingProfile.glickoRating)}
+                </div>
+                <div style={{ fontSize: "0.75rem", color: "#888", marginTop: 4, textTransform: "uppercase" }}>
+                  Glicko-2 Rating
+                </div>
+              </div>
+
+              <div style={{ flex: 1 }}>
+                <div style={{ display: "flex", gap: 20, flexWrap: "wrap", marginBottom: 12 }}>
+                  <div>
+                    <div style={{ fontSize: "0.7rem", color: "#888", textTransform: "uppercase" }}>
+                      Rank
+                    </div>
+                    <div style={{ fontSize: "1.2rem", fontWeight: 700, color: "#fff" }}>
+                      #{ratingProfile.globalRank}
+                    </div>
+                  </div>
+                  <div>
+                    <div style={{ fontSize: "0.7rem", color: "#888", textTransform: "uppercase" }}>
+                      RD ±{Math.round(ratingProfile.glickoRd)}
+                    </div>
+                    <div style={{ fontSize: "0.9rem", fontWeight: 600, color: "#aaa" }}>
+                      {rdLabel(ratingProfile.glickoRd)}
+                    </div>
+                  </div>
+                  <div>
+                    <div style={{ fontSize: "0.7rem", color: "#888", textTransform: "uppercase" }}>
+                      Volatility
+                    </div>
+                    <div style={{ fontSize: "0.9rem", fontWeight: 600, color: "#aaa" }}>
+                      {ratingProfile.glickoVolatility.toFixed(4)}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Confidence bar — lower RD = fuller bar */}
+                <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                  <span style={{ fontSize: "0.72rem", color: "#666", minWidth: 85 }}>
+                    Rating confidence
+                  </span>
+                  <div style={{
+                    flex: 1, height: 6, borderRadius: 3,
+                    background: "rgba(255,255,255,0.08)",
+                  }}>
+                    <div style={{
+                      height: "100%", borderRadius: 3,
+                      width: `${Math.max(5, Math.min(100, 100 - ratingProfile.glickoRd / 3.5))}%`,
+                      background: "linear-gradient(90deg,#ffd700,#ffaa00)",
+                      transition: "width 0.5s ease",
+                    }} />
+                  </div>
+                  <span style={{ fontSize: "0.72rem", color: "#666", minWidth: 30 }}>
+                    {Math.round(Math.max(0, 100 - ratingProfile.glickoRd / 3.5))}%
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            {/* Rating history chart */}
+            <div style={{
+              background: "rgba(255,255,255,0.02)",
+              border: "1px solid rgba(255,255,255,0.08)",
+              borderRadius: 14, padding: 16,
+            }}>
+              <div style={{ fontSize: "0.8rem", color: "#888", marginBottom: 10,
+                            textTransform: "uppercase", letterSpacing: "0.08em" }}>
+                Rating History
+              </div>
+              {ratingLoading ? (
+                <div style={{ color: "#555", fontSize: "0.85rem", textAlign: "center", padding: 20 }}>
+                  Loading history…
+                </div>
+              ) : (
+                <RatingChart history={ratingHistory} height={140} />
+              )}
+            </div>
+          </div>
+        )}
+
       </div>
     </div>
   );
@@ -641,7 +758,6 @@ const NotEnoughCompleteGamesCard: React.FC<NotEnoughCompleteGamesCardProps> = ({
 
   return (
     <div className="no-analysis-message" style={{ textAlign: "left" }}>
-      {/* Icon + title */}
       <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 16 }}>
         <FiInfo
           style={{
@@ -658,52 +774,34 @@ const NotEnoughCompleteGamesCard: React.FC<NotEnoughCompleteGamesCardProps> = ({
         </h3>
       </div>
 
-      {/* Progress bar */}
       <div style={{ marginBottom: 16 }}>
-        <div
-          style={{
-            display: "flex",
-            justifyContent: "space-between",
-            fontSize: "0.82rem",
-            color: "#aaa",
-            marginBottom: 6,
-          }}
-        >
+        <div style={{
+          display: "flex", justifyContent: "space-between",
+          fontSize: "0.82rem", color: "#aaa", marginBottom: 6,
+        }}>
           <span>Complete games</span>
           <span>
             <strong style={{ color: "#ffd700" }}>{mlWorthyGames}</strong> / {minimumRequired}
           </span>
         </div>
-        <div
-          style={{
-            height: 8,
-            borderRadius: 4,
-            background: "rgba(255,255,255,0.1)",
-            overflow: "hidden",
-          }}
-        >
-          <div
-            style={{
-              height: "100%",
-              borderRadius: 4,
-              width: `${Math.min(100, (mlWorthyGames / minimumRequired) * 100)}%`,
-              background: "linear-gradient(90deg, #ffd700, #ffaa00)",
-              transition: "width 0.5s ease",
-            }}
-          />
+        <div style={{
+          height: 8, borderRadius: 4,
+          background: "rgba(255,255,255,0.1)", overflow: "hidden",
+        }}>
+          <div style={{
+            height: "100%", borderRadius: 4,
+            width: `${Math.min(100, (mlWorthyGames / minimumRequired) * 100)}%`,
+            background: "linear-gradient(90deg, #ffd700, #ffaa00)",
+            transition: "width 0.5s ease",
+          }} />
         </div>
       </div>
 
-      {/* What counts / doesn't count */}
-      <div
-        style={{
-          background: "rgba(255,255,255,0.04)",
-          borderRadius: 10,
-          padding: "12px 14px",
-          marginBottom: 14,
-          border: "1px solid rgba(255,255,255,0.08)",
-        }}
-      >
+      <div style={{
+        background: "rgba(255,255,255,0.04)", borderRadius: 10,
+        padding: "12px 14px", marginBottom: 14,
+        border: "1px solid rgba(255,255,255,0.08)",
+      }}>
         <p style={{ margin: "0 0 8px", fontSize: "0.88rem", color: "#e0e0e0" }}>
           You need{" "}
           <strong style={{ color: "#ffd700" }}>
@@ -711,16 +809,8 @@ const NotEnoughCompleteGamesCard: React.FC<NotEnoughCompleteGamesCardProps> = ({
           </strong>{" "}
           for AI analysis.
         </p>
-
         {shortGames > 0 && (
-          <p
-            style={{
-              margin: 0,
-              fontSize: "0.82rem",
-              color: "#999",
-              lineHeight: 1.5,
-            }}
-          >
+          <p style={{ margin: 0, fontSize: "0.82rem", color: "#999", lineHeight: 1.5 }}>
             ⚠️{" "}
             <strong style={{ color: "#ffcc44" }}>
               {shortGames} game{shortGames !== 1 ? "s were" : " was"}
@@ -732,44 +822,26 @@ const NotEnoughCompleteGamesCard: React.FC<NotEnoughCompleteGamesCardProps> = ({
         )}
       </div>
 
-      {/* Tip */}
-      <div
-        style={{
-          background: "rgba(100,200,100,0.06)",
-          borderRadius: 8,
-          padding: "10px 12px",
-          marginBottom: 16,
-          border: "1px solid rgba(100,200,100,0.15)",
-          fontSize: "0.82rem",
-          color: "#aaeaaa",
-        }}
-      >
+      <div style={{
+        background: "rgba(100,200,100,0.06)", borderRadius: 8,
+        padding: "10px 12px", marginBottom: 16,
+        border: "1px solid rgba(100,200,100,0.15)",
+        fontSize: "0.82rem", color: "#aaeaaa",
+      }}>
         💡 <strong>Tip:</strong> Play longer games (Rapid or Classical) and try to play
-        at least 10 moves before resigning — this ensures your games count towards
-        analysis.
+        at least 10 moves before resigning — this ensures your games count towards analysis.
       </div>
 
-      {/* Actions */}
       <div style={{ display: "flex", gap: 10 }}>
-        <button
-          className="play-btn"
-          onClick={onPlayNow}
-          style={{ flex: 1 }}
-        >
+        <button className="play-btn" onClick={onPlayNow} style={{ flex: 1 }}>
           Play a Game Now
         </button>
-        <button
-          onClick={onDismiss}
-          style={{
-            padding: "10px 16px",
-            borderRadius: 8,
-            border: "1px solid rgba(255,255,255,0.15)",
-            background: "transparent",
-            color: "#888",
-            cursor: "pointer",
-            fontSize: "0.85rem",
-          }}
-        >
+        <button onClick={onDismiss} style={{
+          padding: "10px 16px", borderRadius: 8,
+          border: "1px solid rgba(255,255,255,0.15)",
+          background: "transparent", color: "#888",
+          cursor: "pointer", fontSize: "0.85rem",
+        }}>
           Dismiss
         </button>
       </div>

@@ -1,0 +1,38 @@
+/* frontend/src/components/RatingBadge/RatingBadge.css */
+.rating-badge-glicko {
+  background: rgba(255, 215, 0, 0.12);
+  border: 1px solid rgba(255, 215, 0, 0.35);
+  border-radius: 10px;
+  padding: 5px 12px;
+  font-size: 0.88rem;
+  font-weight: 700;
+  color: #ffd700;
+  letter-spacing: 0.3px;
+  cursor: default;
+}
+
+.rating-badge-full {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+}
+
+.rating-badge-full .rating-value {
+  font-size: 2rem;
+  font-weight: 800;
+  color: #ffd700;
+  line-height: 1;
+}
+
+.rating-badge-full .rating-label {
+  font-size: 0.72rem;
+  color: #888;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.rating-badge-full .rating-rd {
+  font-size: 0.78rem;
+  color: #666;
+}
