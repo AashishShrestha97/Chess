@@ -42,8 +42,8 @@ public class RatingHistory {
     private Double volatility;
 
     /** Signed rating change in this update (positive = gain). */
-    @Column(nullable = false)
-    private Double change = 0.0;
+@Column(name = "rating_change", nullable = false)
+private Double change = 0.0;
 
     @ManyToOne
     @JoinColumn(name = "game_id")

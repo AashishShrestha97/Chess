@@ -1,10 +1,11 @@
-// backend/.../service/RatingService.java
 package com.chess4everyone.backend.service;
 
 import java.time.Instant;
+import java.util.List;
 
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import com.chess4everyone.backend.entity.Game;
 import com.chess4everyone.backend.entity.RatingHistory;
@@ -19,8 +20,10 @@ import lombok.extern.slf4j.Slf4j;
 /**
  * Orchestrates Glicko-2 rating updates after each completed game.
  *
- * Called from {@link GameService#saveGame} and the multiplayer
- * {@link com.chess4everyone.backend.websocket.GameWebSocketHandler}.
+ * FIXED:
+ * 1. Uses TransactionTemplate so @Transactional works correctly from background threads.
+ * 2. Added updateSoloRating() for AI games (human vs fixed AI state, not human vs human).
+ * 3. Fixed SLF4J log format — replaced {:.1f}/{:+.1f} with String.format() calls.
  */
 @Service
 @RequiredArgsConstructor
@@ -30,71 +33,114 @@ public class RatingService {
     private final Glicko2Service          glicko2;
     private final UserProfileRepository   profileRepo;
     private final RatingHistoryRepository historyRepo;
+    private final PlatformTransactionManager txManager;
+
+    // ── Public API ────────────────────────────────────────────────────────────
 
     /**
-     * Update Glicko-2 ratings for both players after a completed game.
+     * Update Glicko-2 ratings for both players after a completed multiplayer game.
+     *
+     * Safe to call from a background thread — uses TransactionTemplate internally.
      *
      * @param whiteUser   white player entity
      * @param blackUser   black player entity
-     * @param whiteResult "WIN", "LOSS", or "DRAW" (from white's perspective)
-     * @param game        completed game entity (may be null for multiplayer games
-     *                    that have not yet been persisted)
+     * @param whiteResult "WIN", "LOSS", or "DRAW" from white's perspective
+     * @param game        completed game entity (may be null)
      */
-    @Transactional
-    public void updateRatings(
-            User   whiteUser,
-            User   blackUser,
-            String whiteResult,
-            Game   game) {
+    public void updateRatings(User whiteUser, User blackUser, String whiteResult, Game game) {
+        new TransactionTemplate(txManager).execute(status -> {
+            try {
+                UserProfile whiteProfile = getOrCreate(whiteUser);
+                UserProfile blackProfile = getOrCreate(blackUser);
 
-        // Load profiles (create defaults if missing)
-        UserProfile whiteProfile = getOrCreate(whiteUser);
-        UserProfile blackProfile = getOrCreate(blackUser);
+                Glicko2Service.PlayerState whiteState = toPlayerState(whiteProfile);
+                Glicko2Service.PlayerState blackState = toPlayerState(blackProfile);
 
-        // Build PlayerState objects from stored Glicko-2 values
-        Glicko2Service.PlayerState whiteState = new Glicko2Service.PlayerState(
-                whiteProfile.getGlickoRating(),
-                whiteProfile.getGlickoRd(),
-                whiteProfile.getGlickoVolatility());
+                double whiteScore = resultToScore(whiteResult);
 
-        Glicko2Service.PlayerState blackState = new Glicko2Service.PlayerState(
-                blackProfile.getGlickoRating(),
-                blackProfile.getGlickoRd(),
-                blackProfile.getGlickoVolatility());
+                Glicko2Service.UpdatedState[] updated =
+                        glicko2.calculateMatch(whiteState, blackState, whiteScore);
 
-        // Determine score from white's perspective
-        double whiteScore = switch (whiteResult.toUpperCase()) {
-            case "WIN"  -> 1.0;
-            case "DRAW" -> 0.5;
-            default     -> 0.0;   // LOSS
-        };
+                Glicko2Service.UpdatedState newWhite = updated[0];
+                Glicko2Service.UpdatedState newBlack = updated[1];
 
-        // Run Glicko-2 calculation for both players
-        Glicko2Service.UpdatedState[] updated =
-                glicko2.calculateMatch(whiteState, blackState, whiteScore);
+                String blackResult = invertResult(whiteResult);
 
-        Glicko2Service.UpdatedState newWhite = updated[0];
-        Glicko2Service.UpdatedState newBlack = updated[1];
+                log.info("Rating update — White {} ({}) -> {} ({}) | Black {} ({}) -> {} ({})",
+                        whiteUser.getName(), whiteResult,
+                        String.format("%.1f", newWhite.newRating()),
+                        String.format("%+.1f", newWhite.ratingChange()),
+                        blackUser.getName(), blackResult,
+                        String.format("%.1f", newBlack.newRating()),
+                        String.format("%+.1f", newBlack.ratingChange()));
 
-        log.info("Rating update — White {} {} → {:.1f} ({:+.1f}) | Black {} {} → {:.1f} ({:+.1f})",
-                whiteUser.getName(), whiteResult,
-                newWhite.newRating(), newWhite.ratingChange(),
-                blackUser.getName(), whiteResult.equals("WIN") ? "LOSS" : (whiteResult.equals("LOSS") ? "WIN" : "DRAW"),
-                newBlack.newRating(), newBlack.ratingChange());
+                applyUpdate(whiteProfile, newWhite);
+                applyUpdate(blackProfile, newBlack);
 
-        // Apply updates to profiles
-        applyUpdate(whiteProfile, newWhite);
-        applyUpdate(blackProfile, newBlack);
+                profileRepo.save(whiteProfile);
+                profileRepo.save(blackProfile);
 
-        profileRepo.save(whiteProfile);
-        profileRepo.save(blackProfile);
+                saveHistory(whiteUser, whiteProfile, newWhite, game);
+                saveHistory(blackUser, blackProfile, newBlack, game);
 
-        // Persist history entries
-        saveHistory(whiteUser, whiteProfile, newWhite, game);
-        saveHistory(blackUser, blackProfile, newBlack, game);
+            } catch (Exception e) {
+                log.error("Error updating ratings for {} vs {}: {}",
+                        whiteUser.getName(), blackUser.getName(), e.getMessage(), e);
+                status.setRollbackOnly();
+            }
+            return null;
+        });
     }
 
-    // ── helpers ───────────────────────────────────────────────────────────────
+    /**
+     * Update rating for a solo (vs AI) game.
+     *
+     * Uses a fixed "AI" opponent modelled as a 1500-rated player with RD=200.
+     * This means winning against the AI gives a small positive change, and losing
+     * gives a small negative change — realistic for ladder-style progress.
+     *
+     * Safe to call from a background thread.
+     *
+     * @param user   the human player
+     * @param result "WIN", "LOSS", or "DRAW" from the human's perspective
+     * @param game   completed game entity (may be null)
+     */
+    public void updateSoloRating(User user, String result, Game game) {
+        new TransactionTemplate(txManager).execute(status -> {
+            try {
+                UserProfile profile = getOrCreate(user);
+                Glicko2Service.PlayerState playerState = toPlayerState(profile);
+
+                // Fixed AI opponent — 1500 rating, 200 RD (unestablished opponent)
+                Glicko2Service.PlayerState aiState =
+                        new Glicko2Service.PlayerState(1500.0, 200.0, 0.06);
+
+                double score = resultToScore(result);
+
+                Glicko2Service.GameResult gameResult =
+                        new Glicko2Service.GameResult(aiState.rating(), aiState.rd(), score);
+
+                Glicko2Service.UpdatedState updated =
+                        glicko2.calculate(playerState, List.of(gameResult));
+
+                log.info("Solo rating update — {} ({}) -> {} ({})",
+                        user.getName(), result,
+                        String.format("%.1f", updated.newRating()),
+                        String.format("%+.1f", updated.ratingChange()));
+
+                applyUpdate(profile, updated);
+                profileRepo.save(profile);
+                saveHistory(user, profile, updated, game);
+
+            } catch (Exception e) {
+                log.error("Error updating solo rating for {}: {}", user.getName(), e.getMessage(), e);
+                status.setRollbackOnly();
+            }
+            return null;
+        });
+    }
+
+    // ── Helpers ───────────────────────────────────────────────────────────────
 
     private UserProfile getOrCreate(User user) {
         return profileRepo.findByUserId(user.getId()).orElseGet(() -> {
@@ -107,24 +153,28 @@ public class RatingService {
         });
     }
 
-    private void applyUpdate(UserProfile profile,
-                             Glicko2Service.UpdatedState updated) {
+    private Glicko2Service.PlayerState toPlayerState(UserProfile p) {
+        return new Glicko2Service.PlayerState(
+                p.getGlickoRating()     != null ? p.getGlickoRating()     : Glicko2Service.DEFAULT_RATING,
+                p.getGlickoRd()         != null ? p.getGlickoRd()         : Glicko2Service.DEFAULT_RD,
+                p.getGlickoVolatility() != null ? p.getGlickoVolatility() : Glicko2Service.DEFAULT_VOLATILITY
+        );
+    }
+
+    private void applyUpdate(UserProfile profile, Glicko2Service.UpdatedState updated) {
         profile.setGlickoRating(updated.newRating());
         profile.setGlickoRd(updated.newRd());
         profile.setGlickoVolatility(updated.newVolatility());
         profile.setGlickoLastPeriod(Instant.now());
 
-        // Also mirror into legacy integer rating field for backward compat
+        // Mirror into legacy integer field for backward compat
         profile.setRating((int) Math.round(updated.newRating()));
         profile.setRatingChangeThisMonth(
-                profile.getRatingChangeThisMonth()
-                        + (int) Math.round(updated.ratingChange()));
+                profile.getRatingChangeThisMonth() + (int) Math.round(updated.ratingChange()));
     }
 
-    private void saveHistory(User user,
-                             UserProfile profile,
-                             Glicko2Service.UpdatedState updated,
-                             Game game) {
+    private void saveHistory(User user, UserProfile profile,
+                             Glicko2Service.UpdatedState updated, Game game) {
         RatingHistory h = new RatingHistory();
         h.setUser(user);
         h.setRating(profile.getGlickoRating());
@@ -133,5 +183,21 @@ public class RatingService {
         h.setChange(updated.ratingChange());
         h.setGame(game);
         historyRepo.save(h);
+    }
+
+    private double resultToScore(String result) {
+        return switch (result.toUpperCase()) {
+            case "WIN"  -> 1.0;
+            case "DRAW" -> 0.5;
+            default     -> 0.0;
+        };
+    }
+
+    private String invertResult(String result) {
+        return switch (result.toUpperCase()) {
+            case "WIN"  -> "LOSS";
+            case "LOSS" -> "WIN";
+            default     -> "DRAW";
+        };
     }
 }

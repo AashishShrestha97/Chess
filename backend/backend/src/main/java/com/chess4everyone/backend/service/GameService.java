@@ -53,6 +53,8 @@ public class GameService {
         this.ratingService = ratingService;
     }
 
+    // ── Public API ────────────────────────────────────────────────────────────
+
     /**
      * Save a completed game to the `games` table.
      *
@@ -62,9 +64,8 @@ public class GameService {
      * row is only written once.
      */
     public Game saveGame(User user, SaveGameRequest request, Integer ratingChange) {
-        System.out.println("💾 saveGame called for user=" + user.getEmail()
-                + " | result=" + request.result()
-                + " | uuid=" + request.gameUuid());
+        log.info("saveGame called for user={} | result={} | uuid={}",
+                user.getEmail(), request.result(), request.gameUuid());
 
         String rawUuid       = request.gameUuid();
         String canonicalUuid = (rawUuid != null && rawUuid.endsWith("-black"))
@@ -81,11 +82,10 @@ public class GameService {
                 var mpOpt = multiplayerGameRepository.findByGameUuid(canonicalUuid);
                 if (mpOpt.isPresent()) {
                     MultiplayerGame mp = mpOpt.get();
-
                     boolean isWhite = user.getId().equals(mp.getWhitePlayer().getId());
 
                     if (isWhite && mp.getSavedGameId() != null) {
-                        System.out.println("⚠️ White already saved → games.id=" + mp.getSavedGameId());
+                        log.warn("White already saved -> games.id={}", mp.getSavedGameId());
                         return gameRepository.findById(mp.getSavedGameId()).orElse(null);
                     }
 
@@ -95,13 +95,12 @@ public class GameService {
                             if (request.pgn() != null
                                     && request.pgn().equals(g.getPgn())
                                     && user.getId().equals(g.getUser().getId())) {
-                                System.out.println("⚠️ Black already saved → games.id=" + g.getId());
+                                log.warn("Black already saved -> games.id={}", g.getId());
                                 return g;
                             }
                         }
                     }
                 }
-
                 return buildAndSaveGame(user, request, ratingChange, canonicalUuid);
             }
         }
@@ -109,7 +108,7 @@ public class GameService {
         return buildAndSaveGameSolo(user, request, ratingChange);
     }
 
-    // ─────────────────────────────────────────────────────────────────────────
+    // ── Internal save helpers ─────────────────────────────────────────────────
 
     private Game buildAndSaveGame(User user, SaveGameRequest request,
                                    Integer ratingChange, String canonicalUuid) {
@@ -117,7 +116,7 @@ public class GameService {
         Game game = buildGameEntity(user, request, ratingChange);
         Game savedGame = gameRepository.save(game);
 
-        log.info("✅ Game saved → id={} user={} result={}",
+        log.info("Game saved -> id={} user={} result={}",
                 savedGame.getId(), user.getEmail(), request.result());
 
         if (canonicalUuid != null) {
@@ -131,14 +130,11 @@ public class GameService {
                     }
                 });
             } catch (Exception e) {
-                log.warn("⚠️ Could not mark mp game saved: {}", e.getMessage());
+                log.warn("Could not mark mp game saved: {}", e.getMessage());
             }
         }
 
-        // ── Glicko-2 rating update ────────────────────────────────────────────
         triggerRatingUpdate(user, savedGame, request);
-        // ── end rating update ─────────────────────────────────────────────────
-
         updateUserProfile(user, request.result());
         analyzeGameAsync(savedGame);
         return savedGame;
@@ -149,28 +145,25 @@ public class GameService {
             List<Game> recent = gameRepository.findTop5ByUserOrderByPlayedAtDesc(user);
             for (Game g : recent) {
                 if (g.getPgn() != null && request.pgn() != null && g.getPgn().equals(request.pgn())) {
-                    System.out.println("⚠️ Duplicate by PGN → " + g.getId());
+                    log.warn("Duplicate by PGN -> {}", g.getId());
                     return g;
                 }
                 if (g.getMovesJson() != null && request.movesJson() != null
                         && g.getMovesJson().equals(request.movesJson())) {
-                    System.out.println("⚠️ Duplicate by movesJson → " + g.getId());
+                    log.warn("Duplicate by movesJson -> {}", g.getId());
                     return g;
                 }
             }
         } catch (Exception e) {
-            System.out.println("⚠️ Error during duplicate check: " + e.getMessage());
+            log.warn("Error during duplicate check: {}", e.getMessage());
         }
 
         Game game = buildGameEntity(user, request, ratingChange);
         Game savedGame = gameRepository.save(game);
-        System.out.println("✅ Solo game saved → id=" + savedGame.getId()
-                + " user=" + user.getEmail() + " result=" + request.result());
+        log.info("Solo game saved -> id={} user={} result={}",
+                savedGame.getId(), user.getEmail(), request.result());
 
-        // ── Glicko-2 rating update ────────────────────────────────────────────
         triggerRatingUpdate(user, savedGame, request);
-        // ── end rating update ─────────────────────────────────────────────────
-
         updateUserProfile(user, request.result());
         analyzeGameAsync(savedGame);
         return savedGame;
@@ -201,6 +194,62 @@ public class GameService {
         game.setGameDuration(request.timeControl());
         game.setTimeAgo("just now");
         return game;
+    }
+
+    // ── Rating update ─────────────────────────────────────────────────────────
+
+    /**
+     * Resolve both players and call the appropriate RatingService method.
+     *
+     * FIXED:
+     * - Solo AI games now call updateSoloRating() instead of updateRatings(user, user, ...)
+     *   which previously resulted in a player rated against themselves (no change).
+     * - Multiplayer games correctly determine white's result before calling updateRatings().
+     * - All DB work inside RatingService uses TransactionTemplate (thread-safe).
+     */
+    private void triggerRatingUpdate(User user, Game savedGame, SaveGameRequest request) {
+        new Thread(() -> {
+            try {
+                Long whiteId = request.whitePlayerId();
+                Long blackId = request.blackPlayerId();
+
+                // ── Solo AI game ──────────────────────────────────────────────
+                if (whiteId == null || blackId == null) {
+                    log.info("Solo game rating update for user={} result={}",
+                            user.getEmail(), request.result());
+                    ratingService.updateSoloRating(user, request.result(), savedGame);
+                    return;
+                }
+
+                // ── Multiplayer game ──────────────────────────────────────────
+                userRepository.findById(whiteId).ifPresent(white ->
+                    userRepository.findById(blackId).ifPresent(black -> {
+
+                        // request.result() is always from the perspective of `user`.
+                        // We need whiteResult for RatingService.updateRatings().
+                        String whiteResult;
+                        if (white.getId().equals(user.getId())) {
+                            // user IS white — result is already from white's perspective
+                            whiteResult = request.result();
+                        } else {
+                            // user IS black — flip the result to get white's perspective
+                            whiteResult = switch (request.result().toUpperCase()) {
+                                case "WIN"  -> "LOSS";
+                                case "LOSS" -> "WIN";
+                                default     -> "DRAW";
+                            };
+                        }
+
+                        log.info("Multiplayer rating update: white={} ({}) vs black={}",
+                                white.getName(), whiteResult, black.getName());
+
+                        ratingService.updateRatings(white, black, whiteResult, savedGame);
+                    }));
+
+            } catch (Exception e) {
+                log.error("Rating update failed for game {}: {}", savedGame.getId(), e.getMessage(), e);
+            }
+        }, "rating-update-" + savedGame.getId()).start();
     }
 
     // ── Read methods ──────────────────────────────────────────────────────────
@@ -268,72 +317,9 @@ public class GameService {
                 analysis.getEndgameScoreBlack()
             );
         } catch (RuntimeException e) {
-            System.out.println("⚠️ Analysis not yet available for game " + gameId + ": " + e.getMessage());
+            log.warn("Analysis not yet available for game {}: {}", gameId, e.getMessage());
             throw e;
         }
-    }
-
-    // ── Async analysis ────────────────────────────────────────────────────────
-
-    private void analyzeGameAsync(Game game) {
-        new Thread(() -> {
-            try {
-                System.out.println("🔍 Async analysis started for game: " + game.getId());
-                stockfishService.analyzeGame(game);
-                System.out.println("✅ Analysis complete for game: " + game.getId());
-            } catch (Exception e) {
-                System.err.println("❌ Failed to analyze game " + game.getId() + ": " + e.getMessage());
-            }
-        }, "analysis-" + game.getId()).start();
-    }
-
-    // ── Rating update ─────────────────────────────────────────────────────────
-
-    /**
-     * Resolve both players and call {@link RatingService#updateRatings}.
-     * For solo AI games only the human player's profile is updated
-     * (the AI has no user record).
-     */
-    private void triggerRatingUpdate(User user,
-                                      Game savedGame,
-                                      SaveGameRequest request) {
-        new Thread(() -> {
-            try {
-                Long whiteId = request.whitePlayerId();
-                Long blackId = request.blackPlayerId();
-
-                if (whiteId == null || blackId == null) {
-                    // Solo AI game – update only the human
-                    ratingService.updateRatings(
-                            user,
-                            user,           // dummy; service handles solo case
-                            request.result(),
-                            savedGame);
-                    return;
-                }
-
-                userRepository.findById(whiteId).ifPresent(white ->
-                    userRepository.findById(blackId).ifPresent(black -> {
-                        // Determine white's result
-                        String whiteResult;
-                        if (white.getId().equals(user.getId())) {
-                            whiteResult = request.result();
-                        } else {
-                            // current user is black
-                            whiteResult = switch (request.result().toUpperCase()) {
-                                case "WIN"  -> "LOSS";
-                                case "LOSS" -> "WIN";
-                                default     -> "DRAW";
-                            };
-                        }
-                        ratingService.updateRatings(white, black, whiteResult, savedGame);
-                    }));
-
-            } catch (Exception e) {
-                log.error("❌ Rating update failed for game {}: {}",
-                        savedGame.getId(), e.getMessage(), e);
-            }
-        }, "rating-update-" + savedGame.getId()).start();
     }
 
     // ── Profile update ────────────────────────────────────────────────────────
@@ -356,7 +342,21 @@ public class GameService {
         profile.setWinRate(total > 0 ? (profile.getWins() * 100.0) / total : 0.0);
 
         profileRepository.save(profile);
-        System.out.println("📊 Profile updated for: " + user.getEmail());
+        log.info("Profile updated for: {}", user.getEmail());
+    }
+
+    // ── Async analysis ────────────────────────────────────────────────────────
+
+    private void analyzeGameAsync(Game game) {
+        new Thread(() -> {
+            try {
+                log.info("Async analysis started for game: {}", game.getId());
+                stockfishService.analyzeGame(game);
+                log.info("Analysis complete for game: {}", game.getId());
+            } catch (Exception e) {
+                log.error("Failed to analyze game {}: {}", game.getId(), e.getMessage());
+            }
+        }, "analysis-" + game.getId()).start();
     }
 
     // ── Utility ───────────────────────────────────────────────────────────────
