@@ -77,7 +77,7 @@ const Navbar: React.FC<NavbarProps> = ({ rating, streak }) => {
             </a>
             <a href="/game-history" className="nav-link">
               <span className="nav-icon">📜</span>
-              Game History
+              History
             </a>
             <a href="/settings" className="nav-link">
               <span className="nav-icon">⚙️</span>

@@ -947,6 +947,10 @@
   animation: spin 1s linear infinite;
 }
 
+.glicko-section{
+  margin-top: 60px;
+}
+
 /* ============= RESPONSIVE ADJUSTMENTS ============= */
 @media (max-width: 768px) {
   .profile-page {
