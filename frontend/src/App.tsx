@@ -38,18 +38,7 @@ const App: React.FC = () => {
         <Route path="/game-history" element={<ProtectedRoute><GameHistoryPage /></ProtectedRoute>} />
         <Route path="/game-review/:gameId" element={<ProtectedRoute><GameReviewPage /></ProtectedRoute>} />
         <Route path="/rankings" element={<ProtectedRoute><RankingsPage /></ProtectedRoute>} />
-
-        {/* Matchmaking — navigates to /voicechess or /classicchess on match found */}
         <Route path="/matchmaking" element={<ProtectedRoute><MatchmakingPage /></ProtectedRoute>} />
-
-        {/*
-          /classicchess and /voicechess handle BOTH solo AND multiplayer games.
-          When coming from matchmaking, location.state contains:
-            { gameId, gameUuid, color, timeControl, gameType, opponentName, ... }
-          Both pages check for gameId in state to detect multiplayer mode.
-          The old /classicchess/multiplayer and /voicechess/multiplayer routes
-          are removed — MatchmakingPage now routes directly here.
-        */}
         <Route path="/classicchess" element={<ProtectedRoute><StandardChessPage /></ProtectedRoute>} />
         <Route path="/voicechess"   element={<ProtectedRoute><VoiceGamePage /></ProtectedRoute>} />
       </Routes>
