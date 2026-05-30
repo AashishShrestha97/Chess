@@ -740,7 +740,7 @@ const HomePage: React.FC = () => {
       }
 
       const welcomeText =
-        `Welcome to Chess for Everyone! Say "show commands" to see what you can do, or say "start voice chess" to begin.`;
+        `Welcome to Chess for Everyone! Say "show commands" to see what you can do, or say "play voice chess" to begin.`;
 
       console.log("🔊 Playing welcome message...");
       try {

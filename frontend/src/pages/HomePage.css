@@ -813,7 +813,7 @@
 /* Enhanced Time Control Modal Styles */
 
 .time-selector-dialog {
-    width: min(860px, 94vw);
+    width: min(1100px, 96vw);
     background: linear-gradient(145deg, #1a1a1a 0%, #0f0f0f 100%);
     padding: 0;
     border: 1px solid rgba(255, 215, 0, 0.2);
